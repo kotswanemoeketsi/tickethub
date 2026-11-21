@@ -1,0 +1,147 @@
+# GotATicket on Docker — the whole platform with one command:
+#
+#   docker compose up -d                     # empty platform, sign in with the admin below
+#   docker compose --profile demo up -d      # the same, plus demo events, orders and accounts
+#
+# Website and portal: http://localhost:8000      Emails sent by the app: http://localhost:8025
+#
+# Every setting below has a working default for trying GotATicket on your own machine.
+# Copy .env.example to .env to change them; see docs/DEPLOYMENT.md before going live.
+
+name: gotaticket
+
+x-app: &app
+  image: gotaticket:local
+  build:
+    context: .
+    args:
+      VITE_APP_NAME: ${APP_NAME:-GotATicket}
+  restart: unless-stopped
+  environment: &app-env
+    APP_ENV: ${APP_ENV:-development}
+    APP_NAME: ${APP_NAME:-GotATicket}
+    PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8000}
+    API_URL: ${PUBLIC_URL:-http://localhost:8000}
+    DATABASE_DSN: gotaticket:${MYSQL_PASSWORD:-gotaticket}@tcp(mysql:3306)/gotaticket
+    REDIS_URL: redis://redis:6379/0
+    AUTO_MIGRATE: "false" # the migrate service applies migrations before anything starts
+    EMBEDDED_WORKER: "false" # the worker service runs background jobs
+    # Empty secrets are allowed in development (the app logs a warning); production
+    # refuses to start without them. Generate with: openssl rand -base64 48
+    JWT_SECRET: ${JWT_SECRET:-}
+    QR_SIGNING_KEY: ${QR_SIGNING_KEY:-}
+    COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+    PASSWORD_HASH_ITERATIONS: ${PASSWORD_HASH_ITERATIONS:-600000}
+    PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-sandbox}
+    PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+    SANDBOX_WEBHOOK_SECRET: ${SANDBOX_WEBHOOK_SECRET:-docker-sandbox-secret}
+    EFT_ENABLED: ${EFT_ENABLED:-true}
+    EFT_BANK_NAME: ${EFT_BANK_NAME:-First National Bank}
+    EFT_ACCOUNT_NAME: ${EFT_ACCOUNT_NAME:-GotATicket (Pty) Ltd}
+    EFT_ACCOUNT_NUMBER: ${EFT_ACCOUNT_NUMBER:-62000000000}
+    EFT_BRANCH_CODE: ${EFT_BRANCH_CODE:-250655}
+    GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+    DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com}
+    AI_MODEL: ${AI_MODEL:-deepseek-flash}
+    AI_REVIEW_MODEL: ${AI_REVIEW_MODEL:-deepseek-v4-pro}
+    AI_DAILY_TOKEN_LIMIT: ${AI_DAILY_TOKEN_LIMIT:-2000000}
+    MAIL_FROM: ${MAIL_FROM:-GotATicket <no-reply@gotaticket.local>}
+    SMTP_HOST: ${SMTP_HOST:-mailpit}
+    SMTP_PORT: ${SMTP_PORT:-1025}
+    SMTP_USERNAME: ${SMTP_USERNAME:-}
+    SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+    SMTP_TLS: ${SMTP_TLS:-none}
+    BOOTSTRAP_ADMIN_EMAIL: ${BOOTSTRAP_ADMIN_EMAIL:-admin@gotaticket.local}
+    BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-ChangeMe2026}
+    LOG_FORMAT: ${LOG_FORMAT:-text}
+  volumes:
+    - uploads:/data/uploads
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    command: ["--innodb-buffer-pool-size=256M", "--performance-schema=OFF"]
+    environment:
+      MYSQL_DATABASE: gotaticket
+      MYSQL_USER: gotaticket
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-gotaticket}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-gotaticket-root}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    ports:
+      - "${MYSQL_PORT:-3307}:3306" # reachable from your machine, e.g. with a database client
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "gotaticket", "-p${MYSQL_PASSWORD:-gotaticket}"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "${MAILPIT_PORT:-8025}:8025"
+
+  # Applies the database migrations (backend/migrations/*.sql, built into the image),
+  # then exits. Everything else waits for it.
+  migrate:
+    <<: *app
+    command: ["migrate"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      mysql: { condition: service_healthy }
+
+  # The website, the portal and the API.
+  app:
+    <<: *app
+    command: ["serve"]
+    ports:
+      - "${WEB_PORT:-8000}:8080"
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      mailpit: { condition: service_started }
+
+  # Emails, reservation expiry, payment and refund reconciliation.
+  worker:
+    <<: *app
+    command: ["worker"]
+    healthcheck:
+      disable: true # the image's check probes the web port, which only `app` serves
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+  # Demo data: organisers, 21 events with artwork, six weeks of orders and an account for
+  # every role (password Password123). Only with `--profile demo`, and only into an empty
+  # database. Never use it on a live site.
+  seed:
+    <<: *app
+    command: ["seed"]
+    restart: "no"
+    profiles: ["demo"]
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+
+volumes:
+  mysql-data:
+  uploads:

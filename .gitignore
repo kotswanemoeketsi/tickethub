@@ -1,0 +1,18 @@
+# Local configuration and data
+.env
+backend/storage/
+backend/bin/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local Redis snapshots and TypeScript build caches
+dump.rdb
+*.tsbuildinfo

@@ -1,0 +1,134 @@
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/instrument-sans";
+@import "tailwindcss";
+
+/*
+ * Design tokens.
+ *
+ * Palette "Jacaranda night": the deep violet of a Highveld evening (ink), the jacaranda
+ * blossom for actions (brand), and marigold for the things a buyer scans for first:
+ * dates, prices, "selling fast".
+ * Type: Bricolage Grotesque for display (event titles, dates, prices), Instrument Sans
+ * for everything you read or tap.
+ */
+@theme {
+  --font-sans: "Instrument Sans Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Bricolage Grotesque Variable", "Instrument Sans Variable", ui-sans-serif, system-ui, sans-serif;
+
+  --color-brand-50: #f3f0ff;
+  --color-brand-100: #e8e2ff;
+  --color-brand-200: #d3c8ff;
+  --color-brand-300: #b4a2ff;
+  --color-brand-400: #9174ff;
+  --color-brand-500: #7a55ff;
+  --color-brand-600: #6a3ff5;
+  --color-brand-700: #5a2fdb;
+  --color-brand-800: #4826b0;
+  --color-brand-900: #3a2189;
+
+  --color-ink-950: #0e0b2b;
+  --color-ink-900: #15123a;
+  --color-ink-800: #1f1b4e;
+  --color-ink-700: #2c2766;
+  --color-ink-600: #423c85;
+  --color-ink-300: #a9a4d6;
+  --color-ink-200: #cdc9ea;
+
+  --color-marigold-200: #ffe2a6;
+  --color-marigold-300: #ffd27a;
+  --color-marigold-400: #ffc24d;
+  --color-marigold-500: #ffb020;
+  --color-marigold-600: #e09000;
+
+  --color-canvas: #f6f5fa;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    background: var(--color-canvas);
+    color: var(--color-zinc-900);
+    font-feature-settings: "ss01", "cv11";
+  }
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+  }
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /*
+   * The ticket stub: the one decorative device in the product. A dashed tear line with a
+   * notch cut out at each end separates the date from the rest of the ticket.
+   * Set --stub-bg to the colour behind the ticket so the notches read as holes.
+   */
+  .stub-line {
+    position: relative;
+    border-left: 2px dashed var(--color-zinc-200);
+  }
+  .stub-line::before,
+  .stub-line::after {
+    content: "";
+    position: absolute;
+    left: -9px;
+    width: 16px;
+    height: 16px;
+    border-radius: 9999px;
+    background: var(--stub-bg, var(--color-canvas));
+  }
+  .stub-line::before { top: -9px; }
+  .stub-line::after { bottom: -9px; }
+
+  .stub-line-h {
+    position: relative;
+    border-top: 2px dashed var(--color-zinc-200);
+  }
+  .stub-line-h::before,
+  .stub-line-h::after {
+    content: "";
+    position: absolute;
+    top: -9px;
+    width: 16px;
+    height: 16px;
+    border-radius: 9999px;
+    background: var(--stub-bg, var(--color-canvas));
+  }
+  .stub-line-h::before { left: -9px; }
+  .stub-line-h::after { right: -9px; }
+
+  /* Horizontal scrolling rows of event cards. */
+  .rail {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(260px, 1fr);
+    gap: 1.25rem;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+    padding-bottom: 0.25rem;
+  }
+  .rail::-webkit-scrollbar { display: none; }
+  .rail > * { scroll-snap-align: start; }
+  @media (min-width: 1024px) {
+    .rail { grid-auto-columns: calc((100% - 3 * 1.25rem) / 4); }
+  }
+}
+
+/* Long-form text such as event descriptions keeps the organiser's line breaks. */
+.prose-text {
+  white-space: pre-line;
+  line-height: 1.7;
+  max-width: 68ch;
+}

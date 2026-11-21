@@ -1,0 +1,13 @@
+**/node_modules
+**/dist
+**/.env
+backend/storage
+backend/bin
+deploy
+docs
+*.md
+.git
+
+# Local Redis snapshots and TypeScript build caches
+dump.rdb
+*.tsbuildinfo

@@ -22,15 +22,16 @@ type LocationCity struct {
 	Longitude  *float64 `json:"longitude"`
 }
 
-// LocationProvince is a province and its cities, in alphabetical order.
+// LocationProvince is a province and its cities with upcoming events, in alphabetical order.
 type LocationProvince struct {
 	Name       string         `json:"name"`
 	EventCount int            `json:"event_count"`
 	Cities     []LocationCity `json:"cities"`
 }
 
-// PublicLocations lists the provinces and cities that have upcoming events, both in
-// alphabetical order.
+// PublicLocations lists all nine provinces, including those with no upcoming events yet (so
+// a new marketplace shows its whole coverage), and under each only the cities that have
+// upcoming events. Both are in alphabetical order; venues outside the nine come last.
 func (s *Service) PublicLocations(ctx context.Context) ([]LocationProvince, error) {
 	key := "public:v" + s.publicVersion(ctx) + ":locations"
 	var cached []LocationProvince
@@ -72,11 +73,14 @@ func (s *Service) PublicLocations(ctx context.Context) ([]LocationProvince, erro
 		return nil, err
 	}
 
-	byProvince := map[string]*LocationProvince{}
+	byProvince := make(map[string]*LocationProvince, len(geo.Provinces)+1)
+	for _, name := range geo.Provinces {
+		byProvince[name] = &LocationProvince{Name: name, Cities: []LocationCity{}}
+	}
 	for k, c := range cities {
 		p, ok := byProvince[k.province]
 		if !ok {
-			p = &LocationProvince{Name: k.province}
+			p = &LocationProvince{Name: k.province, Cities: []LocationCity{}}
 			byProvince[k.province] = p
 		}
 		p.Cities = append(p.Cities, *c)

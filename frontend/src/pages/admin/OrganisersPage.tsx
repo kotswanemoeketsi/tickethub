@@ -16,7 +16,7 @@ function CreateOrganiserModal({ onClose }: { onClose: () => void }) {
   const toast = useToast()
   const navigate = useNavigate()
   const queryClient = useQueryClient()
-  const [form, setForm] = useState({ name: '', email: '', phone: '', description: '', commission: '5', owner_email: '', owner_first_name: '', owner_last_name: '' })
+  const [form, setForm] = useState({ name: '', email: '', phone: '', description: '', commission: '3.5', owner_email: '', owner_first_name: '', owner_last_name: '' })
   const create = useMutation({
     mutationFn: () => {
       const { commission, ...rest } = form
@@ -47,7 +47,7 @@ function CreateOrganiserModal({ onClose }: { onClose: () => void }) {
       <div className="grid gap-4 sm:grid-cols-2">
         {create.error && !Object.keys(errors).length && <div className="sm:col-span-2"><Alert tone="error">{errorMessage(create.error)}</Alert></div>}
         <Input label="Name" value={form.name} onChange={set('name')} error={errors.name} />
-        <Input label="Commission (%)" inputMode="decimal" value={form.commission} onChange={set('commission')} error={errors.commission_bps} />
+        <Input label="Commission (%)" hint="Plus R5 per paid ticket, deducted from organiser proceeds. Free tickets are exempt." inputMode="decimal" value={form.commission} onChange={set('commission')} error={errors.commission_bps} />
         <Input label="Contact email" type="email" value={form.email} onChange={set('email')} error={errors.email} />
         <Input label="Phone" value={form.phone} onChange={set('phone')} error={errors.phone} />
         <Textarea label="Description" className="sm:col-span-2" rows={2} value={form.description} onChange={set('description')} error={errors.description} />
@@ -74,7 +74,7 @@ export default function OrganisersPage() {
     { header: 'Organiser', cell: (o) => <div><p className="font-medium text-zinc-900">{o.name}</p><p className="text-xs text-zinc-500">{o.email}</p></div> },
     { header: 'Events', cell: (o) => o.event_count, align: 'right' },
     { header: 'Team', cell: (o) => o.member_count, align: 'right' },
-    { header: 'Commission', cell: (o) => `${o.commission_bps / 100}%`, align: 'right' },
+    { header: 'Commission', cell: (o) => `${o.commission_bps / 100}% + R5 / paid ticket`, align: 'right' },
     { header: 'Status', cell: (o) => <StatusBadge status={o.status} /> },
     { header: 'Joined', cell: (o) => formatDate(o.created_at) },
   ]

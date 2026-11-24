@@ -21,9 +21,9 @@
 #   # No domain yet: http://<server ip>:8000, sandbox payments
 #   sudo ./scripts/deploy-ubuntu.sh --port 8000 --email you@example.co.za
 #
-#   # Later, with a domain pointing at the server: HTTPS and live Paystack payments
+#   # Later, with a domain pointing at the server: HTTPS and live Ozow payments
 #   sudo ./scripts/deploy-ubuntu.sh --domain tickets.example.co.za --email you@example.co.za \
-#        --paystack-key sk_live_xxx
+#        --ozow
 #
 # Moving from the IP address to a domain keeps all data: run the script again with --domain.
 # To release a new version, upload the new code (or use --repo) and run the script again.
@@ -47,7 +47,7 @@ HOST_IP=""
 PORT=""
 EMAIL=""
 ADMIN_EMAIL=""
-PAYSTACK_KEY=""
+OZOW=false
 REPO=""
 BRANCH=main
 STAGING=false
@@ -83,7 +83,7 @@ Usage: sudo $0 [--ip IP] [--port PORT] [options]        no domain: http://IP:POR
 Without a domain (plain HTTP, for testing and demos):
   --ip IP                The server's public IPv4 address (default: detected)
   --port PORT            Port the site listens on (default: 8000)
-                         Always a test site: sandbox payments, or a Paystack test key.
+                         Always a test site: sandbox payments.
 
 With a domain (HTTPS through Caddy and Let's Encrypt):
   --domain DOMAIN        e.g. tickets.example.co.za; its DNS A record must point here
@@ -91,8 +91,9 @@ With a domain (HTTPS through Caddy and Let's Encrypt):
   --port PORT            Internal port Caddy forwards to (default: 8000)
 
 Payments:
-  --paystack-key KEY     Paystack secret key. sk_live_ keys need a domain (production);
-                         sk_test_ keys work on a test site
+  --ozow                 Enable live Ozow payments using credentials in $ENV_FILE.
+                         Requires a domain and OZOW_CLIENT_ID, OZOW_CLIENT_SECRET,
+                         OZOW_SITE_CODE and OZOW_WEBHOOK_SECRET.
   --staging              Domain only: a test site with sandbox payments, no real money
 
 Options:
@@ -119,7 +120,7 @@ parse_args() {
       --port) PORT="${2:?--port needs a value}"; shift 2 ;;
       --email) EMAIL="${2:?--email needs a value}"; shift 2 ;;
       --admin-email) ADMIN_EMAIL="${2:?--admin-email needs a value}"; shift 2 ;;
-      --paystack-key) PAYSTACK_KEY="${2:?--paystack-key needs a value}"; shift 2 ;;
+      --ozow) OZOW=true; shift ;;
       --repo) REPO="${2:?--repo needs a value}"; shift 2 ;;
       --branch) BRANCH="${2:?--branch needs a value}"; shift 2 ;;
       --staging) STAGING=true; shift ;;
@@ -145,8 +146,8 @@ parse_args() {
     [[ $DOMAIN =~ ^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$ ]] ||
       die "--domain must be a domain name such as tickets.example.co.za (no https:// or path)"
     [[ -n $EMAIL ]] || { usage >&2; die "--email is required with --domain"; }
-    if $STAGING && [[ -n $PAYSTACK_KEY ]]; then
-      die "use either --staging or --paystack-key, not both"
+    if $STAGING && $OZOW; then
+      die "use either --staging or --ozow, not both"
     fi
     if $DEMO && ! $STAGING; then
       die "--demo needs --staging on a domain; demo data must never reach a live site"
@@ -155,8 +156,8 @@ parse_args() {
     # No HTTPS without a domain: passwords would travel unencrypted, so this is always a
     # test site and live keys are refused.
     STAGING=true
-    if [[ $PAYSTACK_KEY == sk_live_* ]]; then
-      die "live Paystack keys need a domain with HTTPS; use an sk_test_ key or --domain"
+    if $OZOW; then
+      die "Ozow payments need a domain with HTTPS; use --domain"
     fi
     if [[ -n $HOST_IP ]]; then
       valid_ipv4 "$HOST_IP" || die "--ip must be an IPv4 address such as 102.165.10.20"
@@ -452,9 +453,13 @@ PASSWORD_HASH_ITERATIONS=600000
 BOOTSTRAP_ADMIN_EMAIL=
 BOOTSTRAP_ADMIN_PASSWORD=
 
-# sandbox = built-in test gateway; paystack = real payments (required in production).
+# sandbox = built-in test gateway; ozow = live payments (required in production).
 PAYMENT_PROVIDER=sandbox
-PAYSTACK_SECRET_KEY=
+OZOW_CLIENT_ID=
+OZOW_CLIENT_SECRET=
+OZOW_SITE_CODE=
+OZOW_WEBHOOK_SECRET=
+OZOW_BASE_URL=https://one.ozow.com/v1
 SANDBOX_WEBHOOK_SECRET=
 
 # Bank details shown for EFT payments.
@@ -501,7 +506,7 @@ write_env() {
   secure_env_file
 
   # Checked before anything changes, so a refused run leaves the settings as they were.
-  if has_domain && ! $STAGING && [[ -n $PAYSTACK_KEY ]]; then
+  if has_domain && ! $STAGING && { $OZOW || [[ "$(get_env PAYMENT_PROVIDER)" == ozow ]]; }; then
     refuse_demo_data_in_production
   fi
 
@@ -536,27 +541,22 @@ write_env() {
   set_env PUBLIC_URL "$site"
   set_env API_URL "$site"
 
-  if ! has_domain; then
-    set_env APP_ENV staging
-    if [[ -n $PAYSTACK_KEY ]]; then
-      set_env PAYMENT_PROVIDER paystack
-      set_env PAYSTACK_SECRET_KEY "$PAYSTACK_KEY"
-    elif [[ "$(get_env PAYSTACK_SECRET_KEY)" == sk_live_* || -z "$(get_env PAYSTACK_SECRET_KEY)" ]]; then
-      set_env PAYMENT_PROVIDER sandbox
-    fi
-  elif $STAGING; then
+  if ! has_domain || $STAGING; then
     set_env APP_ENV staging
     set_env PAYMENT_PROVIDER sandbox
-  elif [[ -n $PAYSTACK_KEY ]]; then
+  elif $OZOW || [[ "$(get_env PAYMENT_PROVIDER)" == ozow ]]; then
+    for key in OZOW_CLIENT_ID OZOW_CLIENT_SECRET OZOW_SITE_CODE OZOW_WEBHOOK_SECRET; do
+      [[ -n "$(get_env "$key")" ]] || die "set $key in $ENV_FILE before enabling Ozow"
+    done
+    [[ "$(get_env OZOW_BASE_URL)" == https://one.ozow.com/v1 ]] ||
+      die "live Ozow payments require OZOW_BASE_URL=https://one.ozow.com/v1"
     set_env APP_ENV production
-    set_env PAYMENT_PROVIDER paystack
-    set_env PAYSTACK_SECRET_KEY "$PAYSTACK_KEY"
-  elif [[ "$(get_env APP_ENV)" == production && -n "$(get_env PAYSTACK_SECRET_KEY)" ]]; then
-    : # a production site from an earlier run; keep its settings
+    set_env PAYMENT_PROVIDER ozow
   elif [[ "$(get_env APP_ENV)" == staging ]]; then
     STAGING=true
+    set_env PAYMENT_PROVIDER sandbox
   else
-    die "choose --paystack-key KEY for a live site or --staging for a test site"
+    die "configure Ozow credentials in $ENV_FILE and choose --ozow for a live site, or --staging for a test site"
   fi
 
   if [[ -z "$(get_env SMTP_HOST)" ]]; then
@@ -848,9 +848,7 @@ summary() {
   fi
 
   if ! $STAGING; then
-    mode="production (Paystack)"
-  elif [[ "$(get_env PAYMENT_PROVIDER)" == paystack ]]; then
-    mode="test site (Paystack test key)"
+    mode="production (Ozow)"
   else
     mode="test site (sandbox payments, no real money)"
   fi
@@ -884,7 +882,7 @@ EOF
   if has_domain; then
     cat <<EOF
 
-  Paystack webhook URL:   $site/api/v1/payments/webhooks/paystack
+  Ozow webhook URL:       $site/api/v1/payments/webhooks/ozow
   Google redirect URI:    $site/api/v1/auth/google/callback
 EOF
   else
@@ -894,9 +892,9 @@ EOF
     - Passwords travel unencrypted; don't use ones you use elsewhere.
     - At the door, type ticket codes: browsers allow the camera only on HTTPS.
     - Installing the app, offline tickets and "Use my location" need HTTPS.
-    - Google sign-in and live Paystack payments need a domain.
+    - Google sign-in and live Ozow payments need a domain.
   When you have a domain, point its DNS A record at $HOST_IP and run:
-    sudo $APP_DIR/src/scripts/deploy-ubuntu.sh --domain <your domain> --email <your email> --paystack-key <sk_live_...>
+    sudo $APP_DIR/src/scripts/deploy-ubuntu.sh --domain <your domain> --email <your email> --ozow
   $([[ "$(get_env DEMO_DATA)" == true ]] && echo "This server has demo data; the script will ask you to clear it before going live." || echo "Your events, orders and accounts are kept.")
 EOF
   fi

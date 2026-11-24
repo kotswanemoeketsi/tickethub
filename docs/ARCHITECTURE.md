@@ -9,7 +9,7 @@ GotATicket is a **modular monolith**: one Go binary, one MySQL database, with ea
              └──────────────────┬─────────────────────────┘
                                 │ HTTPS (one origin)
                                 │
-   Paystack ──webhooks──► ┌─────▼──────────────────────────┐
+   Ozow     ──webhooks──► ┌─────▼──────────────────────────┐
             ◄─verify/refund│ gotaticket serve  (stateless)   │──► Redis (cache, rate limits)
                            │ web app (static) · /api        │
                            │ identity · rbac · organisers   │
@@ -56,7 +56,7 @@ reserve ──► checkout ──► pay ──► verify ──► issue ticket
 
 1. **Reserve.** The API locks the ticket type rows (`SELECT … FOR UPDATE`, always in ascending ID order to avoid deadlocks), checks availability, limits, sale windows and promo code usage, then increments `quantity_reserved`. A database `CHECK (quantity_sold + quantity_reserved <= quantity_total)` makes overselling impossible even if a bug slipped past the application check. Transactions that hit a deadlock or lock timeout are retried automatically.
 2. **Checkout.** Attendee details are saved per ticket. Online payment extends the hold to at least 10 more minutes (never beyond 45 minutes from the reservation) and returns the gateway's checkout URL. EFT extends the hold to 48 hours, but never closer than 2 hours before the event, and returns the bank details and the order reference to use.
-3. **Payment confirmation never trusts the browser.** The return page only asks the API to *verify*. Payments are confirmed when the gateway says so server-to-server: Paystack webhooks are checked against the HMAC signature and then re-verified with Paystack's API before anything changes. Webhooks are de-duplicated. A reconciliation task re-checks pending payments every 2 minutes in case a webhook is lost.
+3. **Payment confirmation never trusts the browser.** The return page only asks the API to *verify*. Payments are confirmed when the gateway says so server-to-server: Ozow full webhooks are checked against the Svix signature and timestamp, then re-verified with Ozow One API before anything changes. Webhooks are de-duplicated. A reconciliation task re-checks pending payments every 2 minutes in case a webhook is lost.
 4. **Issuing tickets.** On confirmation the reservation becomes a sale, one ticket per attendee is created with a unique code, and email jobs are queued in the same transaction (transactional outbox), so an email is never sent for a sale that rolled back, and never lost for one that committed.
 5. **Expiry.** Every 30 seconds the worker expires unpaid reservations and returns their stock.
 6. **Edge cases.** A payment that arrives after the reservation expired re-reserves the stock if it is still available, and is refunded automatically if not. A second successful payment for the same order is refunded. A payment that completes after the event was cancelled is refunded.

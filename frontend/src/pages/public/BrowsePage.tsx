@@ -69,6 +69,8 @@ export function BrowsePage() {
   const categories = useQuery({ queryKey: ['public', 'categories'], queryFn: () => api<Category[]>('/public/categories'), staleTime: 300_000 })
   const locations = useLocations()
   const provinces = withEvents(locations.data)
+  // Only a province is chosen, so an empty list means the province has nothing on yet.
+  const provinceOnly = !!province && !city && !q && !category && !maxPrice && !when
   const query = { q, category, city, province, sort, max_price: maxPrice, from: range.from, to: range.to }
   const events = useInfiniteQuery({
     queryKey: ['public', 'events', 'browse', query],
@@ -202,12 +204,21 @@ export function BrowsePage() {
             <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">{[0, 1, 2, 3, 4, 5].map((i) => <CardSkeleton key={i} />)}</div>
           ) : list.length === 0 ? (
             <div className="rounded-3xl bg-white ring-1 ring-zinc-200">
-              <EmptyState
-                icon={<CalendarSearch className="size-6" />}
-                title="No events match these filters"
-                description="Try another date, city or category, or clear the filters to see everything that's on."
-                action={<Button variant="secondary" onClick={() => setParams({}, { replace: true })}>Clear filters</Button>}
-              />
+              {provinceOnly ? (
+                <EmptyState
+                  icon={<CalendarSearch className="size-6" />}
+                  title={`No events in ${province} yet`}
+                  description="Organisers add new events all the time. Meanwhile, see what's on in the rest of the country."
+                  action={<Button variant="secondary" onClick={() => setParams({}, { replace: true })}>See all events</Button>}
+                />
+              ) : (
+                <EmptyState
+                  icon={<CalendarSearch className="size-6" />}
+                  title="No events match these filters"
+                  description="Try another date, city or category, or clear the filters to see everything that's on."
+                  action={<Button variant="secondary" onClick={() => setParams({}, { replace: true })}>Clear filters</Button>}
+                />
+              )}
             </div>
           ) : (
             <>

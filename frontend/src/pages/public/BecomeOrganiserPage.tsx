@@ -23,7 +23,7 @@ export function BecomeOrganiserPage() {
         <p className="mt-3 text-lg text-zinc-600">Create events, set up ticket types and promo codes, and get paid — while we handle payments, ticket delivery and the door.</p>
         <ul className="mt-8 space-y-5">
           {[
-            { icon: <BadgeDollarSign className="size-5" />, title: 'Simple pricing', text: 'A small commission per ticket sold. No monthly fees.' },
+            { icon: <BadgeDollarSign className="size-5" />, title: 'Simple pricing', text: '3.5% plus R5 per paid ticket, deducted from your proceeds. No monthly fees. Free tickets are free.' },
             { icon: <QrCode className="size-5" />, title: 'Fast, fraud-proof entry', text: 'Signed QR tickets and a phone scanner app for your door staff.' },
             { icon: <ChartLine className="size-5" />, title: 'Live reporting', text: 'Sales, attendance and payouts at a glance, exportable to Excel.' },
           ].map((f) => (

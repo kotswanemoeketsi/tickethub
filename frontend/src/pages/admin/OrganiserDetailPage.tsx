@@ -46,7 +46,7 @@ function ProfileCard({ organiser, platformAdmin }: { organiser: Organiser; platf
         <Input label="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} error={errors.name} />
         <Input label="Contact email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} error={errors.email} />
         <Input label="Phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} error={errors.phone} />
-        <Input label="Commission (%)" inputMode="decimal" value={form.commission} onChange={(e) => setForm({ ...form, commission: e.target.value })} error={errors.commission_bps} disabled={!platformAdmin} />
+        <Input label="Commission (%)" hint="Plus R5 per paid ticket, deducted from organiser proceeds. Free tickets are exempt." inputMode="decimal" value={form.commission} onChange={(e) => setForm({ ...form, commission: e.target.value })} error={errors.commission_bps} disabled={!platformAdmin} />
         <Textarea label="Description" className="sm:col-span-2" rows={3} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} error={errors.description} />
         <div className="flex justify-end sm:col-span-2"><Button type="submit" loading={save.isPending}>Save</Button></div>
       </form>

@@ -56,7 +56,7 @@ Base path: `/api/v1`. Requests and responses are JSON unless noted.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/payments/webhooks/paystack` | Verified with the `x-paystack-signature` header, then re-checked with Paystack |
+| POST | `/payments/webhooks/ozow` | Full `transaction.complete` events verified with Svix signatures, then re-checked with Ozow One API |
 | POST | `/payments/webhooks/sandbox` | Development gateway only |
 
 ## Portal (`/admin`, permission in brackets)

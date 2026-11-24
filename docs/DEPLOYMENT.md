@@ -2,42 +2,59 @@
 
 GotATicket ships as one image, built from the `Dockerfile` at the repository root. It contains the Go binary and the built React app, so the same image runs every role: `serve` (website, portal and API), `worker`, `migrate` and `seed`. Add MySQL 8.4 and Redis. `docker-compose.yml` runs all of it on one server; the same image runs on any container platform (it listens on port 8080 and has a built-in health check, `gotaticket healthcheck`).
 
-## One Ubuntu server, one command
+## One Ubuntu server, one command (nginx, no Docker)
 
-`scripts/deploy-ubuntu.sh` sets up a fresh Ubuntu 22.04 or 24.04 server (2 vCPU / 4 GB recommended): Docker, a firewall that opens only SSH and the site's ports, a `.env` with random secrets, and daily backups. With a domain it also adds HTTPS through Caddy, with automatic Let's Encrypt certificates.
-
-Copy the project to the server and unzip it (for example `scp gotaticket.zip you@server:`, then `unzip gotaticket.zip && cd gotaticket`), and run the script as root.
-
-**No domain yet: the server's IP address and a port.** The site runs on plain HTTP at `http://<server ip>:<port>`, always as a test site (sandbox payments, or a Paystack `sk_test_` key):
+`deploy.sh` sets up GotATicket on an Ubuntu 22.04, 24.04 or 26.04 server. It uses the MySQL database and Redis server you already have, and puts nginx in front of the app. Copy the zip to the server and run:
 
 ```bash
-sudo ./scripts/deploy-ubuntu.sh --port 8000 --email you@example.co.za          # add --demo for demo data
+unzip gotaticket.zip && cd gotaticket
+sudo ./deploy.sh
 ```
 
-The IP address is detected; pass `--ip` to choose it. If your cloud provider has its own firewall or security group, open the port there as well. Browsers keep some features for HTTPS only, so until you have a domain: door staff type ticket codes instead of using the camera; installing the app, offline tickets and "Use my location" don't work; Google sign-in and live payments are unavailable; and passwords travel unencrypted.
+No options are needed. The site opens at `http://<server ip>` as a test site with sandbox payments. Run `sudo ./deploy.sh --help` for the options.
 
-**With a domain.** Point its DNS A record at the server first:
+What the script does:
+
+- **Installs** nginx, and Go and Node.js to build the app. Go and Node.js come from go.dev and nodejs.org and are checked against their published checksums. MySQL and Redis are not installed or reconfigured.
+- **Database:** it reads the login from `DATABASE_DSN` in `/opt/gotaticket/.env`. If that's missing, it looks in the project's `.env` or `backend/.env`, for `DATABASE_DSN`, `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME`, or `MYSQL_USER`/`MYSQL_PASSWORD`/`MYSQL_DATABASE`. It checks the login before building and stops with the MySQL error if it fails. Nothing in MySQL is changed, except that the database itself is created if it doesn't exist and the user is allowed to create it.
+- **Redis:** it uses `REDIS_URL` from `.env`, else Redis on `127.0.0.1:6379`. Without Redis the app still runs, keeping its cache in memory.
+- **Settings:** writes `/opt/gotaticket/.env`. Values already there are kept, missing ones are added, and a copy of the previous file is saved as `.env.bak`.
+- **Services:** runs the app as two systemd services, `gotaticket-web` and `gotaticket-worker`, under the unprivileged `gotaticket` user. The app listens on `127.0.0.1:8000` only, and nginx forwards port 80 to it.
+- **Firewall:** opens SSH and the site's port with ufw. It also sets up daily backups.
+
+**With a domain:** point its DNS A record at the server and fill in the four Ozow credentials in `/opt/gotaticket/.env` (see [Ozow](#ozow)), then run:
 
 ```bash
-# Live site with Paystack
-sudo ./scripts/deploy-ubuntu.sh --domain tickets.example.co.za --email you@example.co.za \
-     --paystack-key sk_live_xxx
-
-# Test site with sandbox payments and demo data
-sudo ./scripts/deploy-ubuntu.sh --domain staging.example.co.za --email you@example.co.za --staging --demo
+sudo ./deploy.sh --domain tickets.example.co.za --email you@example.co.za --ozow
 ```
 
-To move from the IP address to a domain, run the script again with `--domain`: events, orders and accounts are kept. A server that was loaded with demo data refuses to go live and shows how to start with an empty database.
+The script first checks that the domain points at this server. If it doesn't yet, the script stops before changing anything and says what to fix. It then gets a Let's Encrypt certificate, which certbot renews automatically. nginx serves HTTPS and redirects plain HTTP to it. If `www.<domain>` also points at the server, it's included in the certificate and redirects to the main domain. Events, orders and accounts are kept. Ports 80 and 443 must be open in your hosting provider's firewall.
 
-Or let the script clone from git with `--repo git@github.com:<owner>/gotaticket.git` (add the server's SSH key as a read-only deploy key). Run `./scripts/deploy-ubuntu.sh --help` for every option.
+**Without a domain**, browsers keep some features for HTTPS only:
 
-What you get:
+- Door staff type ticket codes instead of using the camera.
+- Installing the app, offline tickets and "Use my location" don't work.
+- Google sign-in and live payments are unavailable.
+- Passwords travel unencrypted.
 
-- The app in `/opt/gotaticket`, settings in `/opt/gotaticket/.env` (readable by root only). It runs with `docker-compose.yml` plus `docker-compose.prod.yml`, which keeps MySQL off the network and binds Mailpit to `127.0.0.1`. With a domain the app also listens on `127.0.0.1` only, behind Caddy (Docker would otherwise publish ports straight through the firewall).
-- The first super administrator's sign-in in `/root/gotaticket-admin.txt`. Change the password after signing in, then remove `BOOTSTRAP_ADMIN_PASSWORD` from `.env`.
-- Backups of the database and uploaded images every night at 02:30 in `/var/backups/gotaticket`, kept for 14 days (`/usr/local/sbin/gotaticket-backup` runs one now). Copy them off the server as well.
+### How a release works
 
-The script is safe to run again. It never replaces the secrets or database passwords in an existing `.env`, so tickets already issued stay valid. Run it again after you change `.env` (SMTP details, `DEEPSEEK_API_KEY`, Google sign-in) or to release a new version: upload the new code to a new folder and run its script, or use `--repo` to pull the latest commit.
+Each run builds a new release in `/opt/gotaticket/releases/<time>-<commit>`. It then migrates the database with the new binary. Only if that succeeds does it point `/opt/gotaticket/current` at the new release and restart both services. If a build or migration fails, the site keeps running the previous release. The last three releases are kept. The secrets in `.env` are never replaced, so tickets already issued stay valid. To release a new version, unzip it on the server and run its `deploy.sh`.
+
+### Day-to-day
+
+| Task | Command |
+| --- | --- |
+| Status | `systemctl status gotaticket-web gotaticket-worker` |
+| Live logs | `journalctl -u gotaticket-web -u gotaticket-worker -f` |
+| Apply a change to `.env` | `sudo systemctl restart gotaticket-web gotaticket-worker` |
+| Run an app command (`migrate`, `seed`) with the server's settings | `sudo gotaticket migrate` |
+| Back up now | `sudo /usr/local/sbin/gotaticket-backup` |
+| nginx site | `/etc/nginx/sites-available/gotaticket` (rewritten on each deploy) |
+
+Backups run every night at 02:30 into `/var/backups/gotaticket` and are kept for 14 days. Each backup holds the database, the uploaded images (`/var/lib/gotaticket/uploads`) and `.env`. Copy them off the server as well.
+
+When `SMTP_HOST` is empty, emails are saved as files in `/var/lib/gotaticket/mail` instead of being sent. The first super administrator's sign-in is saved in `/root/gotaticket-admin.txt`. Change the password after signing in, then remove `BOOTSTRAP_ADMIN_PASSWORD` from `.env`.
 
 ## Required settings
 
@@ -49,7 +66,7 @@ The API refuses to start with `APP_ENV=production` unless these are safe:
 | `PUBLIC_URL` | The site's HTTPS address, e.g. `https://tickets.example.co.za`. Used in emails and payment redirects. |
 | `JWT_SECRET`, `QR_SIGNING_KEY` | Two different random values, 32+ characters (`openssl rand -base64 48`). Changing `QR_SIGNING_KEY` invalidates every QR code already issued, so keep it safe and stable. |
 | `COOKIE_SECURE` | `true` (requires HTTPS) |
-| `PAYMENT_PROVIDER` | `paystack`, with `PAYSTACK_SECRET_KEY` |
+| `PAYMENT_PROVIDER` | `ozow`, with `OZOW_CLIENT_ID`, `OZOW_CLIENT_SECRET`, `OZOW_SITE_CODE` and `OZOW_WEBHOOK_SECRET` |
 | `PASSWORD_HASH_ITERATIONS` | 600000 or more (the default) |
 
 Also set:
@@ -59,13 +76,17 @@ Also set:
 - `EFT_*` — the bank account customers pay into, or `EFT_ENABLED=false`.
 - `TRUST_PROXY_HEADERS=true` only when the API sits behind your own proxy (so client IPs for rate limiting come from `X-Forwarded-For`).
 - `BOOTSTRAP_ADMIN_EMAIL` / `BOOTSTRAP_ADMIN_PASSWORD` — creates the first super administrator on first start. Remove them afterwards.
-- `DEFAULT_COMMISSION_BPS` (500 = 5%), `DEFAULT_CURRENCY` (ZAR), `DEFAULT_TIMEZONE` (Africa/Johannesburg), `RESERVATION_TTL` (15m), `EFT_PAYMENT_WINDOW` (48h), `CHECKIN_OPENS_BEFORE` (4h), `CHECKIN_CLOSES_AFTER_END` (2h) as needed.
+- `DEFAULT_COMMISSION_BPS` (350 = 3.5%; plus R5 per paid ticket), `DEFAULT_CURRENCY` (ZAR), `DEFAULT_TIMEZONE` (Africa/Johannesburg), `RESERVATION_TTL` (15m), `EFT_PAYMENT_WINDOW` (48h), `CHECKIN_OPENS_BEFORE` (4h), `CHECKIN_CLOSES_AFTER_END` (2h) as needed.
 
-## Paystack
+## Ozow
 
-1. In the Paystack dashboard, copy the **secret key** into `PAYSTACK_SECRET_KEY` (test keys work for a staging site).
-2. Set the **webhook URL** to `https://<your site>/api/v1/payments/webhooks/paystack`.
-3. Customers return to `https://<your site>/orders/<id>/payment-return` after paying; that page only asks the API to verify, so nothing depends on it.
+1. In the Ozow dashboard, create a **One API** client with **payments** and **refunds** scopes.
+2. Set `OZOW_CLIENT_ID`, `OZOW_CLIENT_SECRET`, `OZOW_SITE_CODE` and `OZOW_WEBHOOK_SECRET` in the protected server environment file (`/opt/gotaticket/.env` for the Ubuntu script). Keep `OZOW_BASE_URL=https://one.ozow.com/v1` for production.
+3. Configure a **full** `transaction.complete` webhook to `https://<your site>/api/v1/payments/webhooks/ozow`. Use its Svix signing secret for `OZOW_WEBHOOK_SECRET`.
+4. Set `PAYMENT_PROVIDER=ozow`, or deploy with `--ozow` after entering those settings. The deployment script keeps sandbox payments for local/staging demos.
+5. Customers return to `https://<your site>/orders/<id>/payment-return`. The backend verifies payment independently before issuing tickets.
+
+See [OZOW.md](OZOW.md) for testing, migration, refunds and existing-payment handling. Apply migration `0005_ozow.sql` using the normal application migration command. The Ubuntu deployment script does this before restarting the app.
 
 ## Sign in with Google
 

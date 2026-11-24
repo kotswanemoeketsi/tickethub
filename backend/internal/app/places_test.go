@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kotswanemoeketsi/gotaticket/internal/catalog"
+	"github.com/kotswanemoeketsi/gotaticket/internal/platform/geo"
 )
 
 type venueView struct {
@@ -79,8 +80,19 @@ func TestLocationsAndNearbyEvents(t *testing.T) {
 			t.Fatalf("%s cities are not alphabetical: %v", p.Name, cities)
 		}
 	}
-	if !slices.IsSorted(names) || !slices.Contains(names, "Eastern Cape") || slices.Contains(names, "Limpopo") {
-		t.Fatalf("provinces with events: %v", names)
+	// All nine provinces are listed, even without events, but only cities with events.
+	for _, want := range geo.Provinces {
+		if !slices.Contains(names, want) {
+			t.Fatalf("province %s missing from %v", want, names)
+		}
+	}
+	if !slices.IsSorted(names) {
+		t.Fatalf("provinces are not alphabetical: %v", names)
+	}
+	for _, p := range provinces {
+		if p.Name == "Limpopo" && (p.EventCount != 0 || p.Cities == nil || len(p.Cities) != 0) {
+			t.Fatalf("a province without events should have a count of 0 and an empty city list: %+v", p)
+		}
 	}
 	if counts["Johannesburg"] < 1 || counts["Cape Town"] != 1 || counts["Gqeberha"] != 1 || len(counts) != 3 {
 		t.Fatalf("event counts: %v", counts)

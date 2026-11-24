@@ -184,11 +184,13 @@ func (s *Service) issueTickets(ctx context.Context, tx *sql.Tx, o orderRow, meth
 			return false, err
 		}
 	}
-	if err := s.createTickets(ctx, tx, o, items); err != nil {
+	if err := s.createTickets(ctx, tx, o, items, ev.CommissionBPS); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE orders SET status = 'paid', payment_method = ?, paid_at = ?, commission_bps = ?, expires_at = NULL,
-		cancelled_at = NULL, updated_at = ? WHERE id = ?`, method, now, ev.CommissionBPS, now, o.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE orders SET status = 'paid', payment_method = ?, paid_at = ?, commission_bps = ?,
+        commission_cents = (SELECT COALESCE(SUM(t.commission_cents), 0) FROM tickets t WHERE t.order_id = ?),
+        ticket_fees_cents = (SELECT COALESCE(SUM(t.ticket_fee_cents), 0) FROM tickets t WHERE t.order_id = ?), expires_at = NULL,
+		cancelled_at = NULL, updated_at = ? WHERE id = ?`, method, now, ev.CommissionBPS, o.ID, o.ID, now, o.ID); err != nil {
 		return false, err
 	}
 	if err := jobs.Enqueue(ctx, tx, now, JobSendOrderTickets, map[string]int64{"order_id": o.ID}); err != nil {
@@ -199,7 +201,7 @@ func (s *Service) issueTickets(ctx context.Context, tx *sql.Tx, o orderRow, meth
 }
 
 // createTickets issues one ticket per attendee, splitting each line's total exactly.
-func (s *Service) createTickets(ctx context.Context, tx *sql.Tx, o orderRow, items []itemRow) error {
+func (s *Service) createTickets(ctx context.Context, tx *sql.Tx, o orderRow, items []itemRow, commissionBPS int) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id, order_item_id FROM attendees WHERE order_id = ? ORDER BY id`, o.ID)
 	if err != nil {
 		return err
@@ -227,10 +229,11 @@ func (s *Service) createTickets(ctx context.Context, tx *sql.Tx, o orderRow, ite
 		}
 		prices := UnitPrices(it.TotalCents, it.Quantity)
 		for i, attendeeID := range attendees {
+			commission, fixed := ticketFees(prices[i], commissionBPS, complimentary)
 			if _, err := insertWithUniqueCode(tickets.NewCode, func(code string) error {
 				_, err := tx.ExecContext(ctx, `INSERT INTO tickets (code, order_id, order_item_id, event_id, ticket_type_id, attendee_id,
-					price_cents, status, is_complimentary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'valid', ?, ?, ?)`,
-					code, o.ID, it.ID, o.EventID, it.TicketTypeID, attendeeID, prices[i], complimentary, now, now)
+					price_cents, status, is_complimentary, commission_cents, ticket_fee_cents, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'valid', ?, ?, ?, ?, ?)`,
+					code, o.ID, it.ID, o.EventID, it.TicketTypeID, attendeeID, prices[i], complimentary, commission, fixed, now, now)
 				return err
 			}); err != nil {
 				return err

@@ -42,7 +42,8 @@ var (
 
 // CheckoutRequest starts a hosted payment page.
 type CheckoutRequest struct {
-	Reference   string // our unique payment reference
+	ExpiresAt   time.Time // reservation deadline for hosted checkout
+	Reference   string    // our unique payment reference
 	AmountCents int64
 	Currency    string
 	Email       string
@@ -53,7 +54,8 @@ type CheckoutRequest struct {
 
 // CheckoutSession is where to send the customer to pay.
 type CheckoutSession struct {
-	RedirectURL string
+	RedirectURL       string
+	ProviderRequestID string // durable hosted request ID (distinct from transaction ID)
 }
 
 // Verification is the gateway's authoritative view of a transaction.

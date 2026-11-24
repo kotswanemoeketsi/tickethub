@@ -364,6 +364,9 @@ func (s *Service) ProcessRefund(ctx context.Context, p *auth.Principal, refundID
 			}
 			return s.completeRefund(ctx, tx, o, r, "", truncate(ref, 100))
 		case pay.Method == MethodOnline:
+			if pay.Provider != s.gateway.Name() {
+				return apperr.Conflict("refund_provider_mismatch", "This payment belongs to a different payment provider. Process the refund with the original provider.")
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE refunds SET status = 'processing', processed_by = ?, failure_reason = '', updated_at = ? WHERE id = ?`,
 				p.UserID, now, r.ID); err != nil {
 				return err

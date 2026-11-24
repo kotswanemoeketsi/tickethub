@@ -181,7 +181,7 @@ export function CheckoutPage() {
             <section className="rounded-3xl bg-white p-6 ring-1 ring-zinc-200 sm:p-8">
               <h2 className="text-xl font-bold text-ink-900">How would you like to pay?</h2>
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
-                <MethodOption selected={method === 'online'} onSelect={() => setMethod('online')} icon={<CreditCard className="size-4 text-brand-600" />} title="Card or instant EFT" text="Pay securely now. Your tickets arrive straight away." />
+                <MethodOption selected={method === 'online'} onSelect={() => setMethod('online')} icon={<CreditCard className="size-4 text-brand-600" />} title={options.data?.online_provider === 'ozow' ? 'Pay by Bank with Ozow' : 'Card or instant EFT'} text="Pay securely now. Your tickets are issued once payment is confirmed." />
                 {options.data?.eft_enabled && (
                   <MethodOption selected={method === 'eft'} onSelect={() => setMethod('eft')} icon={<Landmark className="size-4 text-brand-600" />} title="Bank transfer (EFT)" text="Reserve now and pay from your banking app. Tickets are issued once the payment reflects." />
                 )}

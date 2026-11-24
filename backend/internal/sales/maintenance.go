@@ -69,7 +69,7 @@ func (s *Service) ReconcilePayments(ctx context.Context) (int, error) {
 
 // ReconcileRefunds polls the gateway for refunds that are still processing.
 func (s *Service) ReconcileRefunds(ctx context.Context) (int, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, provider_refund_id FROM refunds WHERE status = 'processing' AND provider_refund_id <> '' LIMIT 50`)
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id, r.provider_refund_id FROM refunds r JOIN payments p ON p.id = r.payment_id WHERE r.status = 'processing' AND r.provider_refund_id <> '' AND p.provider = ? LIMIT 50`, s.gateway.Name())
 	if err != nil {
 		return 0, err
 	}

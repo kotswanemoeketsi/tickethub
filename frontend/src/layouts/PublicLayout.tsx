@@ -5,7 +5,7 @@ import { ChevronDown, CircleHelp, LayoutDashboard, LoaderCircle, LogOut, MapPin,
 import { api } from '../lib/api'
 import { filtersToParams, useFeatures, wantsSmartSearch, type SearchFilters } from '../lib/ai'
 import { useAuth } from '../lib/auth'
-import { useLocations, withEvents } from '../lib/locations'
+import { allProvinces, useLocations } from '../lib/locations'
 import type { Category } from '../lib/types'
 import { cx } from '../components/ui'
 import { InstallApp } from '../components/InstallApp'
@@ -98,7 +98,7 @@ function SearchBox({ className, autoFocus, onDone }: { className?: string; autoF
 /** Filters the marketplace by province, or by a city within one. */
 function LocationPicker() {
   const { data } = useLocations()
-  const provinces = withEvents(data)
+  const provinces = allProvinces(data)
   const [open, setOpen] = useState(false)
   const [params] = useSearchParams()
   const navigate = useNavigate()
@@ -124,7 +124,7 @@ function LocationPicker() {
       className={cx('flex w-full items-center justify-between gap-3 px-4 text-left hover:bg-zinc-50', className)}
     >
       <span className="truncate">{label}</span>
-      {count !== undefined && <span className="text-xs font-normal text-zinc-400">{count}</span>}
+      {count !== undefined && <span className="shrink-0 text-xs font-normal text-zinc-400">{count > 0 ? count : 'No events yet'}</span>}
     </button>
   )
   return (
@@ -144,7 +144,13 @@ function LocationPicker() {
           {option('All provinces', !city && !province, () => choose({}), cx('py-2.5 text-sm', !city && !province ? 'font-semibold text-brand-700' : 'font-medium text-ink-900'))}
           {provinces.map((p) => (
             <div key={p.name} className="border-t border-zinc-100 py-1.5" role="group" aria-label={p.name}>
-              {option(p.name, province === p.name && !city, () => choose({ province: p.name }), cx('py-2 text-sm font-semibold', province === p.name && !city ? 'text-brand-700' : 'text-ink-900'), p.event_count)}
+              {option(
+                p.name,
+                province === p.name && !city,
+                () => choose({ province: p.name }),
+                cx('py-2 text-sm font-semibold', province === p.name && !city ? 'text-brand-700' : p.event_count > 0 ? 'text-ink-900' : 'text-zinc-500'),
+                p.event_count,
+              )}
               {p.cities.map((c) => (
                 <div key={c.name}>
                   {option(c.name, city === c.name, () => choose({ city: c.name }), cx('py-1.5 pl-8 text-sm', city === c.name ? 'font-semibold text-brand-700' : 'text-zinc-600'), c.event_count)}

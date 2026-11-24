@@ -4,7 +4,7 @@ A multi-organiser event ticketing marketplace. Organisers sign up, create events
 
 - **Backend:** Go 1.24 modular monolith (standard library HTTP, MySQL, optional Redis, JWT), with a background worker.
 - **Frontend:** React 19 + TypeScript + Tailwind. One app holds the public marketplace, the customer account, the staff/organiser portal and a phone-friendly QR scanner.
-- **Payments:** Paystack for card and instant EFT, manual bank EFT with staff confirmation, and a built-in sandbox gateway for development.
+- **Payments:** Ozow Hosted Checkout for Pay by Bank, manual bank EFT with staff confirmation, and a built-in sandbox gateway for development.
 
 ## What's included
 
@@ -65,7 +65,7 @@ docker compose up -d --build                   # rebuild after changing the code
 docker compose run --rm migrate                # apply new migrations by hand
 ```
 
-Every setting has a working default. To change one (ports, the admin account, Paystack or Google keys, bank details, SMTP), copy `.env.example` to `.env` and edit it. One image (`Dockerfile` at the repository root) runs every service: it builds the React app and the Go binary and ships them in a 32 MB image with no shell or operating system, running as a non-root user.
+Every setting has a working default. To change one (ports, the admin account, Ozow or Google credentials, bank details, SMTP), copy `.env.example` to `.env` and edit it. One image (`Dockerfile` at the repository root) runs every service: it builds the React app and the Go binary and ships them in a 32 MB image with no shell or operating system, running as a non-root user.
 
 ## Quick start without Docker
 
@@ -117,7 +117,7 @@ backend/
     organisers/          organisers and their teams
     events/, catalog/    events, ticket types, promo codes, venues, categories
     sales/               reservations, checkout, payments, tickets, refunds
-    payments/            gateway interface: Paystack and the sandbox
+    payments/            gateway interface: Ozow and the sandbox
     tickets/             signed QR codes and PDF tickets
     checkin/             scanning rules and attendance
     reports/, dashboard/ reporting and exports (CSV, Excel, PDF)
@@ -143,7 +143,7 @@ The Go integration tests run the whole application against a real MySQL database
 
 ## Going live
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short: set `APP_ENV=production`, real `JWT_SECRET` and `QR_SIGNING_KEY`, `COOKIE_SECURE=true` behind HTTPS, `PAYMENT_PROVIDER=paystack` with your secret key, a real SMTP provider, Redis, and your bank details for EFT. The API refuses to start in production with unsafe settings. To set up a whole Ubuntu server with HTTPS and backups in one go, run `scripts/deploy-ubuntu.sh` (see [One Ubuntu server, one command](docs/DEPLOYMENT.md#one-ubuntu-server-one-command)).
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short: set `APP_ENV=production`, real `JWT_SECRET` and `QR_SIGNING_KEY`, `COOKIE_SECURE=true` behind HTTPS, `PAYMENT_PROVIDER=ozow` with your One API credentials and webhook signing secret (see [Ozow setup](docs/OZOW.md)), a real SMTP provider, Redis, and your bank details for EFT. The API refuses to start in production with unsafe settings. To set up an Ubuntu server with nginx and your existing MySQL and Redis, run `sudo ./deploy.sh` (see [One Ubuntu server, one command](docs/DEPLOYMENT.md#one-ubuntu-server-one-command-nginx-no-docker)).
 
 ## Documentation
 

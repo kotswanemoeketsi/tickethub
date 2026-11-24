@@ -31,6 +31,18 @@ export function usePlaces(province: string) {
   })
 }
 
+/**
+ * All nine provinces, with or without events, for the location picker: a new marketplace
+ * still shows the whole country it covers. Under each, only cities with events, so nobody
+ * is sent to an empty city page. Places outside the nine appear only when they have events.
+ */
+export function allProvinces(provinces: LocationProvince[] | undefined): LocationProvince[] {
+  const byName = new Map((provinces ?? []).map((p) => [p.name, p]))
+  const nine = saProvinces.map((name) => byName.get(name) ?? { name, event_count: 0, cities: [] })
+  const others = (provinces ?? []).filter((p) => !saProvinces.includes(p.name) && p.event_count > 0)
+  return [...nine, ...others].map((p) => ({ ...p, cities: p.cities.filter((c) => c.event_count > 0) }))
+}
+
 /** Keeps only the provinces and cities that have upcoming events, for filters. */
 export function withEvents(provinces: LocationProvince[] | undefined): LocationProvince[] {
   return (provinces ?? [])

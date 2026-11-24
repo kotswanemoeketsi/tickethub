@@ -22,7 +22,7 @@ function defaultRange() {
 }
 
 function renderCell(value: unknown, column: ReportColumn, currency: string) {
-  if (value === null || value === undefined || value === '') return '—'
+  if (value === null || value === undefined || value === '') return 'â€”'
   // Labels such as "Total" can sit in any column of the totals row.
   if (typeof value === 'string' && column.kind !== 'text' && Number.isNaN(Date.parse(value))) return value
   switch (column.kind) {
@@ -46,10 +46,12 @@ const numeric = (c: ReportColumn) => c.kind === 'money' || c.kind === 'int' || c
 /** Headline figures from the report's totals row, and a trend line for daily reports. */
 function ReportSummary({ table }: { table: ReportTable }) {
   const totals = table.totals
+  const feeKeys = ['commission_fees', 'ticket_fees', 'fees', table.name === 'revenue' ? 'organiser' : 'earnings']
+  const hasFees = table.columns.some((c) => c.key === 'ticket_fees')
   const figures = totals
     ? table.columns
         .map((c, i) => ({ c, v: totals[i] }))
-        .filter(({ c, v }) => (c.kind === 'money' || c.kind === 'int') && typeof v === 'number')
+        .filter(({ c, v }) => (hasFees ? feeKeys.includes(c.key) : c.kind === 'money' || c.kind === 'int') && typeof v === 'number')
         .slice(0, 4)
     : []
   const dateCol = table.columns.findIndex((c) => c.kind === 'date')
@@ -169,13 +171,16 @@ export default function ReportsPage() {
             </Card>
           )}
 
+          {t && t.columns.some((c) => c.key === 'ticket_fees') && (
+            <Alert tone="info">Standard pricing: 3.5% commission + R5 per paid ticket, deducted from organiser proceeds. Free and complimentary tickets are exempt. Completed ticket refunds reverse both fees; historical sales retain their original charges. Commission reflects the rate saved at sale.</Alert>
+          )}
           {t && t.rows.length > 0 && <ReportSummary table={t} />}
 
           <Card className="overflow-hidden">
             {!ready ? (
               <EmptyState title="Choose an event" description="This report covers a single event." />
             ) : table.isLoading ? (
-              <Loading label="Running report…" />
+              <Loading label="Running reportâ€¦" />
             ) : table.error ? (
               <div className="p-5"><Alert tone="error">{errorMessage(table.error)}</Alert></div>
             ) : !t || t.rows.length === 0 ? (

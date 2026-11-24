@@ -65,13 +65,14 @@ func (s *Service) Checkout(ctx context.Context, p *auth.Principal, orderID int64
 		in.Attendees[i].normalize()
 	}
 	var (
-		next        string
-		expired     bool
-		pay         paymentRow
-		eventTitle  string
-		orderRef    string
-		orderEmail  string
-		eftDeadline time.Time
+		next            string
+		expired         bool
+		pay             paymentRow
+		eventTitle      string
+		orderRef        string
+		orderEmail      string
+		eftDeadline     time.Time
+		checkoutExpires time.Time
 	)
 	err := s.db.WithTx(ctx, func(tx *sql.Tx) error {
 		o, err := lockOrder(ctx, tx, orderID)
@@ -127,6 +128,7 @@ func (s *Service) Checkout(ctx context.Context, p *auth.Principal, orderID int64
 			// Give the customer time on the gateway's page, within a hard cap per order.
 			expires := maxTime(*o.ExpiresAt, now.Add(10*time.Minute))
 			expires = minTime(expires, o.CreatedAt.Add(45*time.Minute))
+			checkoutExpires = expires
 			_, err = tx.ExecContext(ctx, `UPDATE orders SET payment_method = 'online', expires_at = ?, updated_at = ? WHERE id = ?`, expires, now, o.ID)
 			return err
 
@@ -179,6 +181,7 @@ func (s *Service) Checkout(ctx context.Context, p *auth.Principal, orderID int64
 	result := CheckoutResult{Next: next}
 	if next == "redirect" {
 		session, err := s.gateway.CreateCheckout(ctx, payments.CheckoutRequest{
+			ExpiresAt:   checkoutExpires,
 			Reference:   pay.ProviderReference,
 			AmountCents: pay.AmountCents,
 			Currency:    pay.Currency,
@@ -194,7 +197,7 @@ func (s *Service) Checkout(ctx context.Context, p *auth.Principal, orderID int64
 			return CheckoutResult{}, apperr.New(http.StatusBadGateway, "payment_unavailable",
 				"We could not reach the payment provider. Please try again or choose EFT.")
 		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE payments SET checkout_url = ?, updated_at = ? WHERE id = ?`, session.RedirectURL, s.now(), pay.ID); err != nil {
+		if _, err := s.db.ExecContext(ctx, `UPDATE payments SET checkout_url = ?, provider_request_id = ?, updated_at = ? WHERE id = ?`, session.RedirectURL, session.ProviderRequestID, s.now(), pay.ID); err != nil {
 			return CheckoutResult{}, err
 		}
 		result.RedirectURL = session.RedirectURL

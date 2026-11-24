@@ -45,8 +45,8 @@ var Definitions = []Definition{
 	{Name: "sales-by-category", Title: "Sales by ticket category", Description: "Tickets and revenue by ticket category (VIP, General, Early Bird...)", Permission: rbac.ReportsView, EventFilter: eventOptional, build: salesByCategory},
 	{Name: "event-performance", Title: "Event performance", Description: "Sell-through, revenue and attendance per event", Permission: rbac.ReportsView, EventFilter: eventOptional, build: eventPerformance},
 	{Name: "attendees", Title: "Attendee list", Description: "Every ticket holder of an event and their check-in status", Permission: rbac.ReportsView, NeedsEvent: true, EventFilter: eventRequired, build: attendees},
-	{Name: "revenue", Title: "Revenue", Description: "Daily gross sales, refunds, platform fees and organiser earnings", Permission: rbac.ReportsFinancial, EventFilter: eventOptional, build: revenue},
-	{Name: "organiser-performance", Title: "Organiser performance", Description: "Sales, refunds and earnings per organiser", Permission: rbac.ReportsFinancial, EventFilter: eventNone, build: organiserPerformance},
+	{Name: "revenue", Title: "Revenue", Description: "Daily sales, refunds, percentage commission, per-ticket fees and organiser earnings", Permission: rbac.ReportsFinancial, EventFilter: eventOptional, build: revenue},
+	{Name: "organiser-performance", Title: "Organiser performance", Description: "Sales, refunds, commission, per-ticket fees and earnings per organiser", Permission: rbac.ReportsFinancial, EventFilter: eventNone, build: organiserPerformance},
 	{Name: "payments", Title: "Payments", Description: "Online and EFT payments with their status", Permission: rbac.ReportsFinancial, EventFilter: eventOptional, build: paymentsReport},
 	{Name: "refunds", Title: "Refunds", Description: "Refunds requested, approved and processed", Permission: rbac.ReportsFinancial, EventFilter: eventOptional, build: refundsReport},
 }
@@ -307,13 +307,20 @@ func attendees(ctx context.Context, s *Service, scope auth.Scope, f Filter) (*Ta
 	return t, err
 }
 
+// Legacy orders retain their original percentage-only calculation. New orders
+// snapshot fees per ticket, making repeated partial refunds cent-exact.
+const saleCommissionSQL = `COALESCE(x.commission_cents, ROUND(x.total_cents * x.commission_bps / 10000))`
+const refundCommissionSQL = `CASE WHEN x.commission_cents IS NULL THEN ROUND(r.amount_cents * x.commission_bps / 10000)
+    ELSE (SELECT COALESCE(SUM(t.commission_cents), 0) FROM refund_items ri JOIN tickets t ON t.id = ri.ticket_id WHERE ri.refund_id = r.id) END`
+const refundTicketFeesSQL = `(SELECT COALESCE(SUM(t.ticket_fee_cents), 0) FROM refund_items ri JOIN tickets t ON t.id = ri.ticket_id WHERE ri.refund_id = r.id)`
+
 func revenue(ctx context.Context, s *Service, scope auth.Scope, f Filter) (*Table, error) {
 	offset := s.offsetMinutes(f.From)
 	scopeSQL, scopeArgs := scope.SQL("x.organiser_id")
 	evSQL, evArgs := eventClause(f, "x.event_id")
 
 	type day struct {
-		orders, tickets, gross, discounts, refunds, fees int64
+		orders, tickets, gross, discounts, refunds, commission, ticketFees int64
 	}
 	days := map[string]*day{}
 	get := func(k string) *day {
@@ -327,12 +334,12 @@ func revenue(ctx context.Context, s *Service, scope auth.Scope, f Filter) (*Tabl
 	args = append(args, evArgs...)
 	err := query(ctx, s, `SELECT DATE_FORMAT(DATE_ADD(x.paid_at, INTERVAL ? MINUTE), '%Y-%m-%d'), COUNT(*),
 		SUM((SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi WHERE oi.order_id = x.id)),
-		SUM(x.total_cents), SUM(x.discount_cents), SUM(ROUND(x.total_cents * x.commission_bps / 10000))
+		SUM(x.total_cents), SUM(x.discount_cents), SUM(`+saleCommissionSQL+`), SUM(x.ticket_fees_cents)
 		FROM orders x WHERE `+scopeSQL+` AND x.source = 'online' AND x.paid_at >= ? AND x.paid_at < ?`+evSQL+`
 		GROUP BY 1`, args, func(rows *sql.Rows) error {
 		var k string
 		var d day
-		if err := rows.Scan(&k, &d.orders, &d.tickets, &d.gross, &d.discounts, &d.fees); err != nil {
+		if err := rows.Scan(&k, &d.orders, &d.tickets, &d.gross, &d.discounts, &d.commission, &d.ticketFees); err != nil {
 			return err
 		}
 		*get(k) = d
@@ -344,19 +351,20 @@ func revenue(ctx context.Context, s *Service, scope auth.Scope, f Filter) (*Tabl
 	// Refunds of tickets (not of duplicate payments, which were never revenue) reduce
 	// revenue on the day the money was returned, together with the commission on them.
 	err = query(ctx, s, `SELECT DATE_FORMAT(DATE_ADD(r.processed_at, INTERVAL ? MINUTE), '%Y-%m-%d'),
-		SUM(r.amount_cents), SUM(ROUND(r.amount_cents * x.commission_bps / 10000))
+		SUM(r.amount_cents), SUM(`+refundCommissionSQL+`), SUM(`+refundTicketFeesSQL+`)
 		FROM refunds r JOIN orders x ON x.id = r.order_id
 		WHERE `+scopeSQL+` AND r.status = 'completed' AND r.processed_at >= ? AND r.processed_at < ?`+evSQL+`
 		AND EXISTS (SELECT 1 FROM refund_items ri WHERE ri.refund_id = r.id)
 		GROUP BY 1`, args, func(rows *sql.Rows) error {
 		var k string
-		var amount, fees int64
-		if err := rows.Scan(&k, &amount, &fees); err != nil {
+		var amount, commission, ticketFees int64
+		if err := rows.Scan(&k, &amount, &commission, &ticketFees); err != nil {
 			return err
 		}
 		d := get(k)
 		d.refunds += amount
-		d.fees -= fees
+		d.commission -= commission
+		d.ticketFees -= ticketFees
 		return nil
 	})
 
@@ -368,57 +376,62 @@ func revenue(ctx context.Context, s *Service, scope auth.Scope, f Filter) (*Tabl
 	t := &Table{Columns: []Column{
 		{"date", "Date", KindDate}, {"orders", "Orders", KindInt}, {"tickets", "Tickets", KindInt}, {"gross", "Gross sales", KindMoney},
 		{"discounts", "Discounts given", KindMoney}, {"refunds", "Refunds", KindMoney}, {"net", "Net revenue", KindMoney},
-		{"fees", "Platform fees", KindMoney}, {"organiser", "Organiser earnings", KindMoney},
+		{"commission_fees", "Commission", KindMoney}, {"ticket_fees", "Ticket fees", KindMoney},
+		{"fees", "Total fees", KindMoney}, {"organiser", "Organiser earnings", KindMoney},
 	}}
 	var tot day
 	for _, k := range keys {
 		d := days[k]
 		date, _ := time.Parse("2006-01-02", k)
 		net := d.gross - d.refunds
-		t.Rows = append(t.Rows, []any{date, d.orders, d.tickets, d.gross, d.discounts, d.refunds, net, d.fees, net - d.fees})
-		tot.orders, tot.tickets, tot.gross, tot.discounts, tot.refunds, tot.fees = tot.orders+d.orders, tot.tickets+d.tickets,
-			tot.gross+d.gross, tot.discounts+d.discounts, tot.refunds+d.refunds, tot.fees+d.fees
+		t.Rows = append(t.Rows, []any{date, d.orders, d.tickets, d.gross, d.discounts, d.refunds, net, d.commission, d.ticketFees, d.commission + d.ticketFees, net - d.commission - d.ticketFees})
+		tot.orders, tot.tickets, tot.gross, tot.discounts, tot.refunds, tot.commission, tot.ticketFees = tot.orders+d.orders, tot.tickets+d.tickets,
+			tot.gross+d.gross, tot.discounts+d.discounts, tot.refunds+d.refunds, tot.commission+d.commission, tot.ticketFees+d.ticketFees
 	}
 	net := tot.gross - tot.refunds
-	t.Totals = []any{"Total", tot.orders, tot.tickets, tot.gross, tot.discounts, tot.refunds, net, tot.fees, net - tot.fees}
+	t.Totals = []any{"Total", tot.orders, tot.tickets, tot.gross, tot.discounts, tot.refunds, net, tot.commission, tot.ticketFees, tot.commission + tot.ticketFees, net - tot.commission - tot.ticketFees}
 	return t, err
 }
 
 func organiserPerformance(ctx context.Context, s *Service, scope auth.Scope, f Filter) (*Table, error) {
 	scopeSQL, scopeArgs := scope.SQL("o.id")
-	// The six correlated subqueries each take the date range; the scope filter comes last.
+	// The eight correlated subqueries each take the date range; the scope filter comes last.
 	var args []any
-	for i := 0; i < 6; i++ {
+	for i := 0; i < 8; i++ {
 		args = append(args, f.From, f.To)
 	}
 	args = append(args, scopeArgs...)
 	t := &Table{Columns: []Column{
 		{"organiser", "Organiser", KindText}, {"status", "Status", KindText}, {"events", "Events held", KindInt}, {"orders", "Orders", KindInt},
 		{"gross", "Gross sales", KindMoney}, {"refunds", "Refunds", KindMoney}, {"net", "Net revenue", KindMoney},
-		{"commission", "Commission", KindPercent}, {"fees", "Platform fees", KindMoney}, {"earnings", "Organiser earnings", KindMoney},
+		{"commission", "Current rate", KindPercent}, {"commission_fees", "Commission", KindMoney}, {"ticket_fees", "Ticket fees", KindMoney}, {"fees", "Total fees", KindMoney}, {"earnings", "Organiser earnings", KindMoney},
 	}}
-	var events, orders, gross, refunds, fees int64
+	var events, orders, gross, refunds, commission, ticketFees int64
 	err := query(ctx, s, `SELECT o.name, o.status, o.commission_bps,
 		(SELECT COUNT(*) FROM events e WHERE e.organiser_id = o.id AND e.status = 'published' AND e.starts_at >= ? AND e.starts_at < ?),
 		(SELECT COUNT(*) FROM orders x WHERE x.organiser_id = o.id AND x.source = 'online' AND x.paid_at >= ? AND x.paid_at < ?),
 		(SELECT COALESCE(SUM(x.total_cents), 0) FROM orders x WHERE x.organiser_id = o.id AND x.source = 'online' AND x.paid_at >= ? AND x.paid_at < ?),
-		(SELECT COALESCE(SUM(ROUND(x.total_cents * x.commission_bps / 10000)), 0) FROM orders x WHERE x.organiser_id = o.id AND x.source = 'online' AND x.paid_at >= ? AND x.paid_at < ?),
+		(SELECT COALESCE(SUM(`+saleCommissionSQL+`), 0) FROM orders x WHERE x.organiser_id = o.id AND x.source = 'online' AND x.paid_at >= ? AND x.paid_at < ?),
 		(SELECT COALESCE(SUM(r.amount_cents), 0) FROM refunds r JOIN orders x ON x.id = r.order_id WHERE x.organiser_id = o.id AND r.status = 'completed'
 			AND r.processed_at >= ? AND r.processed_at < ? AND EXISTS (SELECT 1 FROM refund_items ri WHERE ri.refund_id = r.id)),
-		(SELECT COALESCE(SUM(ROUND(r.amount_cents * x.commission_bps / 10000)), 0) FROM refunds r JOIN orders x ON x.id = r.order_id WHERE x.organiser_id = o.id
+		(SELECT COALESCE(SUM(`+refundCommissionSQL+`), 0) FROM refunds r JOIN orders x ON x.id = r.order_id WHERE x.organiser_id = o.id
 			AND r.status = 'completed' AND r.processed_at >= ? AND r.processed_at < ? AND EXISTS (SELECT 1 FROM refund_items ri WHERE ri.refund_id = r.id))
+        ,(SELECT COALESCE(SUM(x.ticket_fees_cents), 0) FROM orders x WHERE x.organiser_id = o.id AND x.source = 'online' AND x.paid_at >= ? AND x.paid_at < ?)
+        ,(SELECT COALESCE(SUM(`+refundTicketFeesSQL+`), 0) FROM refunds r JOIN orders x ON x.id = r.order_id WHERE x.organiser_id = o.id
+            AND r.status = 'completed' AND r.processed_at >= ? AND r.processed_at < ? AND EXISTS (SELECT 1 FROM refund_items ri WHERE ri.refund_id = r.id))
 		FROM organisers o WHERE `+scopeSQL+` ORDER BY o.name`, args, func(rows *sql.Rows) error {
 		var name, status string
-		var bps, nEvents, nOrders, g, saleFees, r, refundFees int64
-		if err := rows.Scan(&name, &status, &bps, &nEvents, &nOrders, &g, &saleFees, &r, &refundFees); err != nil {
+		var bps, nEvents, nOrders, g, saleFees, r, refundFees, saleFixed, refundFixed int64
+		if err := rows.Scan(&name, &status, &bps, &nEvents, &nOrders, &g, &saleFees, &r, &refundFees, &saleFixed, &refundFixed); err != nil {
 			return err
 		}
-		net, fee := g-r, saleFees-refundFees
-		t.Rows = append(t.Rows, []any{name, humanize(status), nEvents, nOrders, g, r, net, float64(bps) / 10000, fee, net - fee})
-		events, orders, gross, refunds, fees = events+nEvents, orders+nOrders, gross+g, refunds+r, fees+fee
+		net, comm, fixed := g-r, saleFees-refundFees, saleFixed-refundFixed
+		fee := comm + fixed
+		t.Rows = append(t.Rows, []any{name, humanize(status), nEvents, nOrders, g, r, net, float64(bps) / 10000, comm, fixed, fee, net - fee})
+		events, orders, gross, refunds, commission, ticketFees = events+nEvents, orders+nOrders, gross+g, refunds+r, commission+comm, ticketFees+fixed
 		return nil
 	})
-	t.Totals = []any{"Total", nil, events, orders, gross, refunds, gross - refunds, nil, fees, gross - refunds - fees}
+	t.Totals = []any{"Total", nil, events, orders, gross, refunds, gross - refunds, nil, commission, ticketFees, commission + ticketFees, gross - refunds - commission - ticketFees}
 	return t, err
 }
 

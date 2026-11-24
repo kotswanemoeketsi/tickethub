@@ -148,8 +148,19 @@ func New(ctx context.Context, cfg config.Config, logger *slog.Logger, opts ...Op
 	a.Signer = tickets.NewSigner(cfg.QRSigningKey)
 
 	switch cfg.PaymentProvider {
-	case "paystack":
-		a.Gateway = payments.NewPaystack(cfg.PaystackSecretKey, cfg.PaystackBaseURL)
+	case "ozow":
+		a.Gateway = payments.NewOzow(payments.OzowConfig{
+			ClientID: cfg.OzowClientID, ClientSecret: cfg.OzowClientSecret, SiteCode: cfg.OzowSiteCode,
+			WebhookSecret: cfg.OzowWebhookSecret, BaseURL: cfg.OzowBaseURL,
+		}, func(ctx context.Context, reference string) (string, time.Time, error) {
+			var id string
+			var created time.Time
+			err := db.QueryRowContext(ctx, `SELECT provider_request_id, created_at FROM payments WHERE provider = 'ozow' AND provider_reference = ?`, reference).Scan(&id, &created)
+			if errors.Is(err, sql.ErrNoRows) {
+				err = payments.ErrNotFound
+			}
+			return id, created, err
+		})
 	default:
 		// The sandbox plays the part of an external gateway, so its records must outlive one
 		// process (`gotaticket seed` pays for orders that `gotaticket serve` later refunds).

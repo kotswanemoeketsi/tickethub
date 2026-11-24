@@ -141,7 +141,7 @@ func newEnvWith(t *testing.T, configure func(*config.Config) []app.Option) *env 
 		DatabaseDSN: testDSN, JWTSecret: strings.Repeat("j", 40), QRSigningKey: strings.Repeat("q", 40),
 		// Long-lived access tokens let tests move the clock forward without re-authenticating.
 		AccessTokenTTL: 30 * 24 * time.Hour, RefreshTokenTTL: 60 * 24 * time.Hour, PasswordIterations: 10_000, AuthRateLimit: 100_000,
-		DefaultCurrency: "ZAR", DefaultTimezone: "Africa/Johannesburg", DefaultCommissionBPS: 500,
+		DefaultCurrency: "ZAR", DefaultTimezone: "Africa/Johannesburg", DefaultCommissionBPS: 350,
 		ReservationTTL: 15 * time.Minute, EFTPaymentWindow: 48 * time.Hour, CheckinOpensBefore: 4 * time.Hour, CheckinClosesAfterEnd: 2 * time.Hour,
 		PaymentProvider: "sandbox", SandboxSecret: "sandbox-secret", EFTEnabled: true, EFTBankName: "Test Bank", EFTAccountName: "GotATicket",
 		EFTAccountNumber: "123", EFTBranchCode: "456", MailFrom: "GotATicket <no-reply@gotaticket.test>", StorageDir: t.TempDir(),

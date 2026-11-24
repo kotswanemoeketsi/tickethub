@@ -23,7 +23,7 @@ export function SellPage() {
     { icon: <QrCode className="size-5" />, title: 'Scan at the door', text: 'Every ticket carries a signed QR code. Your door staff scan with any phone; copies, refunded and already-used tickets are refused.' },
     { icon: <BarChart3 className="size-5" />, title: 'Live reports', text: 'Sales, revenue, attendance and payouts as they happen, exportable to Excel, CSV or PDF.' },
     { icon: <Users className="size-5" />, title: 'Your whole team', text: 'Invite colleagues with the access they need: event managers, finance, door staff. They see only your events.' },
-    { icon: <Landmark className="size-5" />, title: 'Simple pricing', text: 'No set-up or monthly fees. A small commission per ticket sold, agreed when your account is approved.' },
+    { icon: <Landmark className="size-5" />, title: 'Simple pricing', text: '3.5% commission plus R5 per paid ticket, deducted from your proceeds. No set-up, monthly or extra buyer booking fees. Free tickets are free.' },
   ]
   const steps = [
     ['Apply', 'Tell us about your organisation. We review every application and email you as soon as your account is approved.'],

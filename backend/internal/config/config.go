@@ -3,8 +3,10 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -51,15 +53,18 @@ type Config struct {
 
 	DefaultCurrency       string        // DEFAULT_CURRENCY
 	DefaultTimezone       string        // DEFAULT_TIMEZONE
-	DefaultCommissionBPS  int           // DEFAULT_COMMISSION_BPS (500 = 5%)
+	DefaultCommissionBPS  int           // DEFAULT_COMMISSION_BPS (350 = 3.5%)
 	ReservationTTL        time.Duration // RESERVATION_TTL
 	EFTPaymentWindow      time.Duration // EFT_PAYMENT_WINDOW
 	CheckinOpensBefore    time.Duration // CHECKIN_OPENS_BEFORE
 	CheckinClosesAfterEnd time.Duration // CHECKIN_CLOSES_AFTER_END
 
-	PaymentProvider   string // PAYMENT_PROVIDER: sandbox | paystack
-	PaystackSecretKey string // PAYSTACK_SECRET_KEY
-	PaystackBaseURL   string // PAYSTACK_BASE_URL
+	PaymentProvider   string // PAYMENT_PROVIDER: sandbox | ozow
+	OzowClientID      string // OZOW_CLIENT_ID
+	OzowClientSecret  string // OZOW_CLIENT_SECRET
+	OzowSiteCode      string // OZOW_SITE_CODE
+	OzowWebhookSecret string // OZOW_WEBHOOK_SECRET
+	OzowBaseURL       string // OZOW_BASE_URL
 	SandboxSecret     string // SANDBOX_WEBHOOK_SECRET
 
 	EFTEnabled       bool   // EFT_ENABLED
@@ -133,15 +138,18 @@ func Load() (Config, error) {
 
 		DefaultCurrency:       strings.ToUpper(env.str("DEFAULT_CURRENCY", "ZAR")),
 		DefaultTimezone:       env.str("DEFAULT_TIMEZONE", "Africa/Johannesburg"),
-		DefaultCommissionBPS:  env.int("DEFAULT_COMMISSION_BPS", 500),
+		DefaultCommissionBPS:  env.int("DEFAULT_COMMISSION_BPS", 350),
 		ReservationTTL:        env.duration("RESERVATION_TTL", 15*time.Minute),
 		EFTPaymentWindow:      env.duration("EFT_PAYMENT_WINDOW", 48*time.Hour),
 		CheckinOpensBefore:    env.duration("CHECKIN_OPENS_BEFORE", 4*time.Hour),
 		CheckinClosesAfterEnd: env.duration("CHECKIN_CLOSES_AFTER_END", 2*time.Hour),
 
 		PaymentProvider:   strings.ToLower(env.str("PAYMENT_PROVIDER", "sandbox")),
-		PaystackSecretKey: env.str("PAYSTACK_SECRET_KEY", ""),
-		PaystackBaseURL:   strings.TrimSuffix(env.str("PAYSTACK_BASE_URL", "https://api.paystack.co"), "/"),
+		OzowClientID:      env.str("OZOW_CLIENT_ID", ""),
+		OzowClientSecret:  env.str("OZOW_CLIENT_SECRET", ""),
+		OzowSiteCode:      env.str("OZOW_SITE_CODE", ""),
+		OzowWebhookSecret: env.str("OZOW_WEBHOOK_SECRET", ""),
+		OzowBaseURL:       strings.TrimRight(env.str("OZOW_BASE_URL", "https://one.ozow.com/v1"), "/"),
 		SandboxSecret:     env.str("SANDBOX_WEBHOOK_SECRET", "sandbox-webhook-secret"),
 
 		EFTEnabled:       env.bool("EFT_ENABLED", true),
@@ -210,12 +218,30 @@ func (c *Config) validate() error {
 		if c.IsProduction() {
 			errs = append(errs, errors.New("PAYMENT_PROVIDER=sandbox is not allowed in production"))
 		}
-	case "paystack":
-		if c.PaystackSecretKey == "" {
-			errs = append(errs, errors.New("PAYSTACK_SECRET_KEY is required when PAYMENT_PROVIDER=paystack"))
+	case "ozow":
+		if c.OzowClientID == "" || c.OzowClientSecret == "" || c.OzowSiteCode == "" || c.OzowWebhookSecret == "" {
+			errs = append(errs, errors.New("OZOW_CLIENT_ID, OZOW_CLIENT_SECRET, OZOW_SITE_CODE and OZOW_WEBHOOK_SECRET are required"))
+		}
+		if key, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(c.OzowWebhookSecret, "whsec_")); err != nil || len(key) == 0 {
+			errs = append(errs, errors.New("OZOW_WEBHOOK_SECRET must be a valid Svix signing secret"))
+		}
+		if c.OzowBaseURL != "https://one.ozow.com/v1" && c.OzowBaseURL != "https://stagingone.ozow.com/v1" {
+			errs = append(errs, errors.New("OZOW_BASE_URL must be an official Ozow One API endpoint"))
+		}
+		if c.IsProduction() && c.OzowBaseURL != "https://one.ozow.com/v1" {
+			errs = append(errs, errors.New("production requires the production Ozow endpoint"))
+		}
+		if c.DefaultCurrency != "ZAR" {
+			errs = append(errs, errors.New("Ozow requires DEFAULT_CURRENCY=ZAR"))
+		}
+		for _, address := range []string{c.PublicURL, c.APIURL} {
+			u, err := url.Parse(address)
+			if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.Hostname() == "localhost" || u.User != nil {
+				errs = append(errs, errors.New("Ozow requires public HTTPS PUBLIC_URL and API_URL"))
+			}
 		}
 	default:
-		errs = append(errs, fmt.Errorf("PAYMENT_PROVIDER must be sandbox or paystack, got %q", c.PaymentProvider))
+		errs = append(errs, fmt.Errorf("PAYMENT_PROVIDER must be sandbox or ozow, got %q", c.PaymentProvider))
 	}
 	if c.AIDailyTokenLimit < 0 {
 		errs = append(errs, errors.New("AI_DAILY_TOKEN_LIMIT must be 0 (no limit) or more"))

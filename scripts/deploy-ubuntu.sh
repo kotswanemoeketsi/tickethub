@@ -519,7 +519,7 @@ write_env_template() { # write_env_template FILE
 APP_NAME=GotATicket
 APP_ENV=staging
 HTTP_ADDR=127.0.0.1:8000
-PUBLIC_URL=http://localhost
+PUBLIC_URL=https://gotaticket.co.za
 API_URL=http://localhost
 LOG_FORMAT=json
 

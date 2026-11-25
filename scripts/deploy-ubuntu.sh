@@ -16,8 +16,8 @@
 # What it does, safely re-runnable:
 #   1. Installs nginx, plus Go and Node.js to build the app (MySQL and Redis are not touched)
 #   2. Reads the database login from the settings you already have (see find_database)
-#   3. Writes /opt/gotaticket/.env from the project's own .env (Ozow, SMTP, EFT, AI and other
-#      settings), keeping every value already set on the server
+#   3. Writes /opt/gotaticket/.env from the environment file (--env-file, else the existing
+#      one, else the project's .env), keeping every value already set on the server
 #   4. Builds a new release, migrates the database, switches to it and restarts the
 #      gotaticket-web and gotaticket-worker services, then waits until the site is healthy
 #   5. Configures nginx (and HTTPS with a domain), opens SSH and HTTP(S) in the firewall
@@ -52,6 +52,7 @@ BRANCH=main
 STAGING=false
 DEMO=false
 FIREWALL=true
+ENV_SOURCE="" # the environment file the settings are read from (see resolve_env_source)
 SRC_PATH="" # the folder the code was copied from (its .env files may hold the database login)
 RELEASE=""
 HTTPS_READY=false
@@ -97,6 +98,11 @@ Payments:
                          OZOW_SITE_CODE and OZOW_WEBHOOK_SECRET.
   --staging              With a domain: a test site with sandbox payments
 
+Settings:
+  --env-file PATH        The environment file every setting is read from. Default: the
+                         existing $ENV_FILE, else the .env in the project folder.
+                         Nothing is hardcoded: Ozow, SMTP, EFT, AI and the rest come from it.
+
 Other:
   --email EMAIL          Your email: Let's Encrypt notices and the first super administrator
   --admin-email EMAIL    First super administrator (default: --email, else
@@ -139,6 +145,7 @@ parse_args() {
       --app-port) APP_PORT="${2:?--app-port needs a value}"; shift 2 ;;
       --email) EMAIL="${2:?--email needs a value}"; shift 2 ;;
       --admin-email) ADMIN_EMAIL="${2:?--admin-email needs a value}"; shift 2 ;;
+      --env-file) ENV_SOURCE="${2:?--env-file needs a value}"; shift 2 ;;
       --ozow) OZOW=true; shift ;;
       --repo) REPO="${2:?--repo needs a value}"; shift 2 ;;
       --source) SOURCE="${2:?--source needs a value}"; shift 2 ;;
@@ -516,6 +523,28 @@ create_service_user() {
   install -d -m 755 "$APP_DIR" "$APP_DIR/releases"
 }
 
+# Picks the environment file the settings are read from and refuses to go on without one:
+# a production deployment must not invent its configuration.
+resolve_env_source() {
+  if [[ -n $ENV_SOURCE ]]; then
+    [[ -f $ENV_SOURCE ]] || die "--env-file $ENV_SOURCE does not exist"
+  elif [[ -f $ENV_FILE ]]; then
+    ENV_SOURCE=$ENV_FILE
+  elif [[ -n $SRC_PATH && -f $SRC_PATH/.env ]]; then
+    ENV_SOURCE=$SRC_PATH/.env
+  else
+    die "no environment file. Create $ENV_FILE, put a .env in the project folder, or pass --env-file PATH."
+  fi
+  info "Settings are read from $ENV_SOURCE"
+}
+
+# env_value KEY: the value of KEY in the environment file, exactly as written there. Empty when
+# the setting is missing from it.
+env_value() { raw_env "$1" "$ENV_SOURCE"; }
+
+# The layout of /opt/gotaticket/.env. Every value is read from the environment file. The ones
+# this script owns (ports, paths, migrations, HTTPS, payment mode) are put right by write_env
+# on every run.
 write_env_template() { # write_env_template FILE
   cat >"$1" <<EOF
 # GotATicket settings, read by the gotaticket-web and gotaticket-worker services.
@@ -523,69 +552,69 @@ write_env_template() { # write_env_template FILE
 # Keep comments on their own lines. Never change QR_SIGNING_KEY: every ticket already
 # issued would stop scanning.
 
-APP_NAME=GotATicket
-APP_ENV=staging
-HTTP_ADDR=127.0.0.1:8000
-PUBLIC_URL=https://gotaticket.co.za
-API_URL=http://localhost
-LOG_FORMAT=json
+APP_NAME=$(env_value APP_NAME)
+APP_ENV=$(env_value APP_ENV)
+HTTP_ADDR=$(env_value HTTP_ADDR)
+PUBLIC_URL=$(env_value PUBLIC_URL)
+API_URL=$(env_value API_URL)
+LOG_FORMAT=$(env_value LOG_FORMAT)
 
-DATABASE_DSN=
-REDIS_URL=
-AUTO_MIGRATE=false
-EMBEDDED_WORKER=false
+DATABASE_DSN=$(env_value DATABASE_DSN)
+REDIS_URL=$(env_value REDIS_URL)
+AUTO_MIGRATE=$(env_value AUTO_MIGRATE)
+EMBEDDED_WORKER=$(env_value EMBEDDED_WORKER)
 
-JWT_SECRET=
-QR_SIGNING_KEY=
-COOKIE_SECURE=false
-TRUST_PROXY_HEADERS=true
-PASSWORD_HASH_ITERATIONS=600000
+JWT_SECRET=$(env_value JWT_SECRET)
+QR_SIGNING_KEY=$(env_value QR_SIGNING_KEY)
+COOKIE_SECURE=$(env_value COOKIE_SECURE)
+TRUST_PROXY_HEADERS=$(env_value TRUST_PROXY_HEADERS)
+PASSWORD_HASH_ITERATIONS=$(env_value PASSWORD_HASH_ITERATIONS)
 
 # First super administrator, created on first start. Remove the password once you have
 # signed in and changed it.
-BOOTSTRAP_ADMIN_EMAIL=
-BOOTSTRAP_ADMIN_PASSWORD=
+BOOTSTRAP_ADMIN_EMAIL=$(env_value BOOTSTRAP_ADMIN_EMAIL)
+BOOTSTRAP_ADMIN_PASSWORD=$(env_value BOOTSTRAP_ADMIN_PASSWORD)
 
 # sandbox = built-in test gateway; ozow = live payments (required in production).
-PAYMENT_PROVIDER=sandbox
-OZOW_CLIENT_ID=
-OZOW_CLIENT_SECRET=
-OZOW_SITE_CODE=
-OZOW_WEBHOOK_SECRET=
-OZOW_BASE_URL=https://one.ozow.com/v1
-SANDBOX_WEBHOOK_SECRET=
+PAYMENT_PROVIDER=$(env_value PAYMENT_PROVIDER)
+OZOW_CLIENT_ID=$(env_value OZOW_CLIENT_ID)
+OZOW_CLIENT_SECRET=$(env_value OZOW_CLIENT_SECRET)
+OZOW_SITE_CODE=$(env_value OZOW_SITE_CODE)
+OZOW_WEBHOOK_SECRET=$(env_value OZOW_WEBHOOK_SECRET)
+OZOW_BASE_URL=$(env_value OZOW_BASE_URL)
+SANDBOX_WEBHOOK_SECRET=$(env_value SANDBOX_WEBHOOK_SECRET)
 
 # Bank details shown for EFT payments.
-EFT_ENABLED=true
-EFT_BANK_NAME=First National Bank
-EFT_ACCOUNT_NAME=GotATicket (Pty) Ltd
-EFT_ACCOUNT_NUMBER=62000000000
-EFT_BRANCH_CODE=250655
+EFT_ENABLED=$(env_value EFT_ENABLED)
+EFT_BANK_NAME=$(env_value EFT_BANK_NAME)
+EFT_ACCOUNT_NAME=$(env_value EFT_ACCOUNT_NAME)
+EFT_ACCOUNT_NUMBER=$(env_value EFT_ACCOUNT_NUMBER)
+EFT_BRANCH_CODE=$(env_value EFT_BRANCH_CODE)
 
 # Email. With SMTP_HOST empty, emails are saved as files in MAIL_DIR instead of sent.
-MAIL_FROM=GotATicket <no-reply@$PROJECT.local>
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USERNAME=
-SMTP_PASSWORD=
+MAIL_FROM=$(env_value MAIL_FROM)
+SMTP_HOST=$(env_value SMTP_HOST)
+SMTP_PORT=$(env_value SMTP_PORT)
+SMTP_USERNAME=$(env_value SMTP_USERNAME)
+SMTP_PASSWORD=$(env_value SMTP_PASSWORD)
 # none, starttls or tls
-SMTP_TLS=starttls
+SMTP_TLS=$(env_value SMTP_TLS)
 
 # Sign in with Google: redirect URI <PUBLIC_URL>/api/v1/auth/google/callback (needs a domain)
-GOOGLE_CLIENT_ID=
-GOOGLE_CLIENT_SECRET=
+GOOGLE_CLIENT_ID=$(env_value GOOGLE_CLIENT_ID)
+GOOGLE_CLIENT_SECRET=$(env_value GOOGLE_CLIENT_SECRET)
 
 # AI features stay off until DEEPSEEK_API_KEY is set.
-DEEPSEEK_API_KEY=
-AI_BASE_URL=https://api.deepseek.com
-AI_MODEL=deepseek-flash
-AI_REVIEW_MODEL=deepseek-v4-pro
-AI_DAILY_TOKEN_LIMIT=2000000
+DEEPSEEK_API_KEY=$(env_value DEEPSEEK_API_KEY)
+AI_BASE_URL=$(env_value AI_BASE_URL)
+AI_MODEL=$(env_value AI_MODEL)
+AI_REVIEW_MODEL=$(env_value AI_REVIEW_MODEL)
+AI_DAILY_TOKEN_LIMIT=$(env_value AI_DAILY_TOKEN_LIMIT)
 
 # Files
-WEB_DIR=$APP_DIR/current/web
-STORAGE_DIR=$DATA_DIR/uploads
-MAIL_DIR=$DATA_DIR/mail
+WEB_DIR=$(env_value WEB_DIR)
+STORAGE_DIR=$(env_value STORAGE_DIR)
+MAIL_DIR=$(env_value MAIL_DIR)
 EOF
 }
 
@@ -608,16 +637,12 @@ add_missing_settings() {
   ((${#added[@]} == 0)) || info "Added missing settings: ${added[*]}"
 }
 
-# Copies settings from the project's .env (SRC_PATH/.env) into $ENV_FILE. On the first run
-# they replace the template defaults; later they only fill settings that are still empty, so
-# edits made on the server are kept. Only settings the app reads are copied, and not the ones
-# this script decides itself (ports, paths, HTTPS, payment mode).
-import_project_env() { # import_project_env FIRST_RUN
-  local source=${SRC_PATH:+$SRC_PATH/.env} template line key value imported=()
-  if [[ -z $source || ! -f $source ]]; then
-    info "No .env in the project folder; using the defaults and what is already in $ENV_FILE"
-    return 0
-  fi
+# On later runs, fills settings that are still empty in $ENV_FILE from the environment file
+# when that is a different file, so edits made on the server are kept. Skips the settings this script decides itself (ports,
+# paths, HTTPS, payment mode).
+import_project_env() {
+  local source=$ENV_SOURCE template line key value imported=()
+  [[ $source != "$ENV_FILE" ]] || return 0
   template=$(mktemp)
   write_env_template "$template"
   while IFS= read -r line; do
@@ -628,28 +653,27 @@ import_project_env() { # import_project_env FIRST_RUN
         COOKIE_SECURE | APP_ENV | PUBLIC_URL | API_URL | PAYMENT_PROVIDER) continue ;;
     esac
     [[ -n "$(get_env "$key" "$source")" ]] || continue
-    if [[ $1 == true || -z "$(get_env "$key")" ]]; then
+    if [[ -z "$(get_env "$key")" ]]; then
       value=$(raw_env "$key" "$source")
       set_env "$key" "$value"
       imported+=("$key")
     fi
   done <"$template"
   rm -f "$template"
-  info "Read ${#imported[@]} setting(s) from $source"
+  ((${#imported[@]} == 0)) || info "Filled empty settings from $source: ${imported[*]}"
 }
 
 write_env() {
   step "Writing the settings ($ENV_FILE)"
+  resolve_env_source
   local first_run=false
   if [[ ! -f $ENV_FILE ]]; then
     write_env_template "$ENV_FILE"
     first_run=true
-    secure_env_file
-    import_project_env true
   else
     cp -p "$ENV_FILE" "$ENV_FILE.bak"
     secure_env_file
-    import_project_env false
+    import_project_env
     add_missing_settings
   fi
   secure_env_file
@@ -777,7 +801,7 @@ find_database() {
     info "Database login from $ENV_FILE"
     return
   fi
-  for file in "$ENV_FILE" ${SRC_PATH:+"$SRC_PATH/.env" "$SRC_PATH/backend/.env"}; do
+  for file in "$ENV_FILE" ${ENV_SOURCE:+"$ENV_SOURCE"} ${SRC_PATH:+"$SRC_PATH/.env" "$SRC_PATH/backend/.env"}; do
     [[ -f $file ]] || continue
     dsn=$(get_env DATABASE_DSN "$file")
     if [[ -n $dsn ]] && parse_dsn "$dsn"; then

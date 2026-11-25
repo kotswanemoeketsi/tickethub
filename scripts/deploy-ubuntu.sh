@@ -16,7 +16,8 @@
 # What it does, safely re-runnable:
 #   1. Installs nginx, plus Go and Node.js to build the app (MySQL and Redis are not touched)
 #   2. Reads the database login from the settings you already have (see find_database)
-#   3. Writes /opt/gotaticket/.env, keeping every value already in it
+#   3. Writes /opt/gotaticket/.env from the project's own .env (Ozow, SMTP, EFT, AI and other
+#      settings), keeping every value already set on the server
 #   4. Builds a new release, migrates the database, switches to it and restarts the
 #      gotaticket-web and gotaticket-worker services, then waits until the site is healthy
 #   5. Configures nginx (and HTTPS with a domain), opens SSH and HTTP(S) in the firewall
@@ -479,12 +480,18 @@ set_env() {
   secure_env_file
 }
 
+# raw_env KEY FILE: the value exactly as written after "KEY=" (quotes and comments included).
+raw_env() {
+  local value
+  value=$(awk -v key="$1" '{ sub(/^export[ \t]+/, "") } index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' "$2")
+  printf '%s' "${value%$'\r'}"
+}
+
 # get_env KEY [FILE]: the value, without surrounding quotes or an inline " #" comment.
 get_env() {
   local file=${2:-$ENV_FILE} value
   [[ -f $file ]] || return 0
-  value=$(awk -v key="$1" '{ sub(/^export[ \t]+/, "") } index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' "$file")
-  value=${value%$'\r'}
+  value=$(raw_env "$1" "$file")
   if [[ $value =~ ^\"(.*)\"$ || $value =~ ^\'(.*)\'$ ]]; then
     value=${BASH_REMATCH[1]}
   elif [[ $value == *" #"* ]]; then
@@ -601,14 +608,48 @@ add_missing_settings() {
   ((${#added[@]} == 0)) || info "Added missing settings: ${added[*]}"
 }
 
+# Copies settings from the project's .env (SRC_PATH/.env) into $ENV_FILE. On the first run
+# they replace the template defaults; later they only fill settings that are still empty, so
+# edits made on the server are kept. Only settings the app reads are copied, and not the ones
+# this script decides itself (ports, paths, HTTPS, payment mode).
+import_project_env() { # import_project_env FIRST_RUN
+  local source=${SRC_PATH:+$SRC_PATH/.env} template line key value imported=()
+  if [[ -z $source || ! -f $source ]]; then
+    info "No .env in the project folder; using the defaults and what is already in $ENV_FILE"
+    return 0
+  fi
+  template=$(mktemp)
+  write_env_template "$template"
+  while IFS= read -r line; do
+    [[ $line =~ ^([A-Z0-9_]+)= ]] || continue
+    key=${BASH_REMATCH[1]}
+    case $key in
+      AUTO_MIGRATE | EMBEDDED_WORKER | WEB_DIR | STORAGE_DIR | MAIL_DIR | HTTP_ADDR | TRUST_PROXY_HEADERS | \
+        COOKIE_SECURE | APP_ENV | PUBLIC_URL | API_URL | PAYMENT_PROVIDER) continue ;;
+    esac
+    [[ -n "$(get_env "$key" "$source")" ]] || continue
+    if [[ $1 == true || -z "$(get_env "$key")" ]]; then
+      value=$(raw_env "$key" "$source")
+      set_env "$key" "$value"
+      imported+=("$key")
+    fi
+  done <"$template"
+  rm -f "$template"
+  info "Read ${#imported[@]} setting(s) from $source"
+}
+
 write_env() {
   step "Writing the settings ($ENV_FILE)"
   local first_run=false
   if [[ ! -f $ENV_FILE ]]; then
     write_env_template "$ENV_FILE"
     first_run=true
+    secure_env_file
+    import_project_env true
   else
     cp -p "$ENV_FILE" "$ENV_FILE.bak"
+    secure_env_file
+    import_project_env false
     add_missing_settings
   fi
   secure_env_file

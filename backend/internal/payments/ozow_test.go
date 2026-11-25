@@ -161,6 +161,12 @@ func TestOzowWebhookAuthentication(t *testing.T) {
 	if err != nil || duplicate.DedupeKey != ev.DedupeKey {
 		t.Fatal("unstable dedupe key")
 	}
+	refundBody := []byte(`{"type":"refund.complete","data":{"SiteCode":"SITE","TransactionReference":"PAY-123","RefundId":"refund-id","IsTest":"False"}}`)
+	refundH := signedOzow(o, refundBody, strconv.FormatInt(time.Now().Unix(), 10))
+	refundEv, err := o.ParseWebhook(refundH, refundBody)
+	if err != nil || refundEv.Kind != WebhookRefund || refundEv.Reference != "refund-id" {
+		t.Fatalf("refund webhook: %+v %v", refundEv, err)
+	}
 	for _, tc := range []struct {
 		name   string
 		header http.Header
@@ -181,6 +187,8 @@ func TestOzowWebhookAuthentication(t *testing.T) {
 		`{"type":"transaction.complete","data":{"id":"tx-id","status":"Successful"}}`,
 		`{"type":"transaction.complete","data":{"SiteCode":"OTHER","TransactionReference":"PAY-123","IsTest":"False"}}`,
 		`{"type":"transaction.complete","data":{"SiteCode":"SITE","TransactionReference":"PAY-123","IsTest":"True"}}`,
+		`{"type":"refund.complete","data":{"SiteCode":"SITE","TransactionReference":"","RefundId":"refund-id","IsTest":"False"}}`,
+		`{"type":"refund.complete","data":{"SiteCode":"SITE","TransactionReference":"PAY-123","RefundId":"","IsTest":"False"}}`,
 	} {
 		b := []byte(bad)
 		if _, err := o.ParseWebhook(signedOzow(o, b, strconv.FormatInt(time.Now().Unix(), 10)), b); err == nil {

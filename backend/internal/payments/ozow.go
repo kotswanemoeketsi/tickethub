@@ -306,6 +306,7 @@ func (o *Ozow) ParseWebhook(header http.Header, body []byte) (WebhookEvent, erro
 		Data struct {
 			SiteCode  string `json:"SiteCode"`
 			Reference string `json:"TransactionReference"`
+			RefundID  string `json:"RefundId"`
 			IsTest    string `json:"IsTest"`
 		} `json:"data"`
 	}
@@ -313,17 +314,26 @@ func (o *Ozow) ParseWebhook(header http.Header, body []byte) (WebhookEvent, erro
 		return WebhookEvent{}, err
 	}
 	ev := WebhookEvent{Type: event.Type, DedupeKey: dedupeKey([]byte(id)), Payload: body}
-	if event.Type != "transaction.complete" {
-		return ev, nil
+	switch event.Type {
+	case "transaction.complete":
+		if event.Data.Reference == "" || event.Data.SiteCode != o.cfg.SiteCode {
+			return WebhookEvent{}, fmt.Errorf("ozow: expected full webhook for the configured site")
+		}
+		// Simulation notifications never authorise real ticket delivery.
+		if !strings.EqualFold(event.Data.IsTest, "False") {
+			return WebhookEvent{}, fmt.Errorf("ozow: test or missing IsTest flag")
+		}
+		ev.Kind, ev.Reference = WebhookPayment, event.Data.Reference
+	case "refund.complete":
+		if event.Data.Reference == "" || event.Data.RefundID == "" || event.Data.SiteCode != o.cfg.SiteCode {
+			return WebhookEvent{}, fmt.Errorf("ozow: invalid refund webhook")
+		}
+		// Simulation notifications never authorise real refund processing.
+		if !strings.EqualFold(event.Data.IsTest, "False") {
+			return WebhookEvent{}, fmt.Errorf("ozow: test or missing IsTest flag in refund")
+		}
+		ev.Kind, ev.Reference = WebhookRefund, event.Data.RefundID
 	}
-	if event.Data.Reference == "" || event.Data.SiteCode != o.cfg.SiteCode {
-		return WebhookEvent{}, fmt.Errorf("ozow: expected full webhook for the configured site")
-	}
-	// Simulation notifications never authorise real ticket delivery.
-	if !strings.EqualFold(event.Data.IsTest, "False") {
-		return WebhookEvent{}, fmt.Errorf("ozow: test or missing IsTest flag")
-	}
-	ev.Kind, ev.Reference = WebhookPayment, event.Data.Reference
 	return ev, nil
 }
 
